@@ -123,3 +123,6 @@ the defect is filed, not fixed. See `handoff-T01.md` for the full diagnosis.
 |---|---|---|
 | 2026-09-03 | T01 | created, moved to `IN_PROGRESS`, gatekeeper `AUTHORIZED (CODING)` |
 | 2026-09-03 | T02–T33 | created in `TODO` |
+| 2026-09-03 | BUG `ed5535ae` | filed (hub test flake found during T01 verification) |
+| 2026-09-03 | T01 | `IN_PROGRESS → REVIEW → TEST → DONE`; server-side validation run `b7c8acad` re-ran `npm run build && npm test` and passed (219 files, 2,368 passed, 1 skipped) |
+| 2026-09-03 | T01 | PR [eduardopin/agenfk#1](https://github.com/eduardopin/agenfk/pull/1) opened from the fork and registered (`agenfk pr-register`, sizing `{task: 1}`) |

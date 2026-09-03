@@ -190,6 +190,23 @@ Caveat that limits how much this number is worth: the session ran on **Opus 5 / 
 instead of the card's Sonnet 5 / medium, so it is not a valid calibration point for the
 §3.5 cost table. **The owner should read D11 as still unanswered after T01.**
 
+## Close-out
+
+| Step (plan Appendix F) | Result |
+|---|---|
+| 1. Prove the Definition of Done | `npm run build && npm test` → 219 files, 2,368 passed, 1 skipped, exit 0; numbers commented on the item |
+| 2. Close the item | `IN_PROGRESS → REVIEW → TEST → DONE`. The final transition ran the project `verifyCommand` server-side (validation run `b7c8acad`) and passed with the same counts |
+| 3. Ship the PR | [eduardopin/agenfk#1](https://github.com/eduardopin/agenfk/pull/1), opened from the fork, registered with `agenfk pr-register` (sizing `{task: 1}`, model `claude-opus-5[1m]`, harness `claude-code`) |
+| 4. Handoff | this file |
+| 5. Registries | `docs/plans/items.md`, `docs/plans/session-notes.md` |
+| 6. Next kickoff | T02 prompt emitted at the end of the session |
+
+Note on contradiction **C5**: the server's `autoGitCommit` (`git add -A && git commit`
+inside the validate handler on DONE) did not fire destructively here because the tree
+was already clean at the moment of the transition. That is luck, not design — with a
+dirty tree it would have swept unrelated files into a commit. It is exactly the race
+T07/T25 must remove before parallel worktrees exist.
+
 ## What T02 must know
 
 - The plan and spec are already committed on this branch; T02 branches from it (or from
