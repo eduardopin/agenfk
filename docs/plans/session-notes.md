@@ -27,6 +27,12 @@
 - **Registros**: `environment.md`, `items.md`, este arquivo, e `handoff-T01.md`.
 - **Fork provado gravável**: branch empurrado para `fork` (`eduardopin/agenfk`).
   `origin` (upstream `cglab-public/agenfk`) não foi tocado.
+- **Gate de verificação passou**: `npm run build && npm test` → 219 arquivos, 2.368
+  testes passando, 1 skipped, `EXIT=0` (1.086s). Uma execução anterior da mesma árvore
+  falhou em `packages/hub/src/test/admin-installations.test.ts` (hook `beforeEach`
+  estourou 30s em 31.813ms); o arquivo passa isolado (5/5, 10,67s) e T01 não altera
+  código-fonte. Registrado como BUG `ed5535ae-4bfd-4a78-b083-ae110545b98a`, não
+  corrigido (`packages/hub` está fora do escopo de T01).
 - **Plugins de escopo de projeto carregam**: verificação determinística (Appendix D)
   listou 46 skills, 19 delas de `superpowers:` / `tdd-workflows:` /
   `database-migrations:`.
@@ -67,6 +73,13 @@
   custo para a tabela de §3.5.
 
 ## Dívida Técnica Registrada
+
+- **BUG `ed5535ae-4bfd-4a78-b083-ae110545b98a`** — flake em
+  `packages/hub/src/test/admin-installations.test.ts`. `beforeEach` faz quatro
+  operações de KDF de senha sem timeout explícito e `afterEach` fecha o banco com
+  requisição ainda em voo (`database is not open`). Aparece sob carga: esta máquina
+  roda a suíte 2,3–2,7× mais devagar que a linha de base de 407s do plano. Não elevar
+  o `hookTimeout` global — isso esconde o vazamento.
 
 - **Branch por task não é registrável no AgEnFK.** `SDLC.md` §2 restringe
   `branchName` a itens de topo; o plano §2.3 quer um branch por task. Opção A:

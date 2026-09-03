@@ -105,6 +105,18 @@ Consequences and options, for T02 (ADR) and T07 (`WorktreeBinding`, D4):
 Either way it is a **public behaviour change to AgEnFK** and needs an owner decision;
 it is recorded here rather than worked around silently.
 
+## Defects found while executing the plan
+
+Filed under the same project but outside the T01–T33 chain (SDLC "Fix-Must-Be-Bug"
+rule: a defect is a BUG, never a TASK).
+
+| Type | Title | Id | Found in |
+|---|---|---|---|
+| BUG | Flaky: hub `admin-installations` `beforeEach` times out at 30s under load; `database is not open` leaks from `afterEach` | `ed5535ae-4bfd-4a78-b083-ae110545b98a` | T01 baseline verification |
+
+`packages/hub` is outside this plan's touch list and T01 may not modify `packages/`, so
+the defect is filed, not fixed. See `handoff-T01.md` for the full diagnosis.
+
 ## Status log
 
 | Date | Task | Event |
