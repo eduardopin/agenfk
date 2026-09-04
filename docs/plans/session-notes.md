@@ -93,3 +93,67 @@
 - **Plano desatualizado em dois pontos**: versão do Claude Code (§2.6) e a afirmação
   de que o diálogo de trust ainda não fora aceito (§2.2) — os plugins de projeto
   carregam, logo já está aceito.
+
+---
+
+# Session Notes — 2026-09-04 — Preparação do terreno + BUG `37660bd2` / BUG `2df0f02f`
+
+Sessão de preparação, não uma task do plano. Rodou em Claude Opus 5 (1M).
+
+## Concluído
+
+- **T02 entregue de fato.** A branch estava com 7 commits e sem PR. PR
+  [eduardopin/agenfk#2](https://github.com/eduardopin/agenfk/pull/2) aberto, registrado
+  (`agenfk pr-register`, sizing `{task: 1}`) e squash-merged. `main` local avançou de
+  `2b3761b6` para `3cc00bf3` por fast-forward de `fork/main`.
+- **BUG `2df0f02f-7533-4733-b935-3a73f749fa22`** criado para a contradição C5, que até
+  aqui só existia no log de contradições e não no board.
+- **Os dois hazards de worktree fechados**, na branch
+  `fix/37660bd2-a249-4e0e-977c-ace47df65fc3_project-root-boundary`
+  (worktree `../agenfk-wt/hazards`):
+  - `packages/server/src/project-root.ts` — resolução limitada ao repositório do
+    chamador. Um marcador `.agenfk` só vale em ou abaixo do toplevel do git, e
+    `os.homedir()` nunca vale. Sem marcador mas dentro de um repositório, o toplevel é
+    a resposta — numa worktree, a raiz da worktree.
+  - As duas cópias divergentes da busca (`server.ts` e `index.ts`, o entry point MCP)
+    viraram uma só. `index.ts` passa `AGENFK_PROJECT_ROOT` / `AGENFK_DB_PATH` como
+    opções. Deixá-lo de fora teria fechado o bug pela metade: tinha o mesmo escape.
+  - O repoint de `project.projectRoot` deixou de ser silencioso — log no servidor e
+    comentário no item. Repontar em silêncio era parte do defeito, não um detalhe.
+  - `autoGitCommit` virou opt-in (`project.autoGitCommit`, ausente = desligado) e
+    recusa qualquer raiz que não seja o toplevel de um repositório ou worktree, o
+    diretório home incluído. Toda recusa é logada com o motivo.
+
+## Decisões Tomadas
+
+| # | Decisão | Consequência |
+|---|---|---|
+| 1 | Manter o orquestrador adiado para a Fase B | T03–T08 seguem como sessões supervisionadas, conforme `orchestrator-design.md` |
+| 2 | Fechar os dois hazards **antes** do T03 | Viraram a primeira unidade de trabalho, com item próprio no board cada um |
+| 3 | `findProjectRoot` cai no toplevel do git e loga o repoint | Alternativa recusada: erro explícito, que quebraria toda worktree até alguém criar `.agenfk/project.json` à mão — exatamente o workaround que se queria eliminar |
+| 4 | `autoGitCommit` passa a ser opt-in, **default desligado** | Mudança funcional visível para todos os usuários do AgEnFK. Registrada no CHANGELOG como BREAKING (behaviour) |
+
+## Próximos Passos
+
+1. Worktree `../agenfk-wt/t03` + `npm ci`, branch
+   `feature/7f8f6821-33d4-492d-8574-dd6b83faff98_t03-…`.
+2. T03 conforme o card §5/T03, com `handoff-T02.md` §"What T03 must know" como entrada.
+
+## Riscos Ativos
+
+- **O daemon em execução ainda roda a versão instalada globalmente**, não esta branch.
+  Enquanto o fix não for instalado, fechar um item a partir de uma worktree continua
+  sujeito ao comportamento antigo. Manter a árvore limpa na transição para DONE.
+- **C11 e C13 seguem sem resposta do owner** — vínculo item↔branch e
+  `agenfk tokens --item` retornando `[]`. O segundo derruba todo o modelo de medição
+  do plano §3.
+
+## Dívida Técnica Registrada
+
+- **Opt-in não retroage.** Projetos que hoje dependem do auto-commit param de comitar
+  até rodarem `agenfk update-project <id> --auto-git-commit true`. É o preço da
+  decisão 4 e está no CHANGELOG, mas nada avisa o usuário na primeira transição para
+  DONE depois do upgrade.
+- **As guardas limitam *onde* o auto-commit acontece, não *o que* ele estagia.** Com
+  o opt-in ligado, `git add -A` continua varrendo a árvore inteira na raiz do projeto.
+  O auto-commit com escopo de worktree e ciente da execução continua sendo T07/T25.

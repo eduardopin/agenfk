@@ -1647,17 +1647,28 @@ program
 
 program
   .command('update-project <id>')
-  .description('Update a project\'s name, description, or verify command (MCP fallback: update_project)')
+  .description('Update a project\'s name, description, verify command, or auto-commit setting (MCP fallback: update_project)')
   .option('--name <name>', 'New project name')
   .option('--description <text>', 'New project description')
   .option('--verify-command <cmd>', 'Project-level verification command')
+  .option('--auto-git-commit <bool>', 'Run `git add -A && git commit` when an item reaches DONE (true|false, default false)')
   .action(async (id, options) => {
     try {
       const updates: Record<string, unknown> = {};
       if (options.name !== undefined) updates.name = options.name;
       if (options.description !== undefined) updates.description = options.description;
-      if (options.verifyCommand === undefined && Object.keys(updates).length === 0) {
-        console.error(chalk.yellow('Nothing to update. Pass at least one of --name, --description, --verify-command.'));
+      let autoGitCommit: boolean | undefined;
+      if (options.autoGitCommit !== undefined) {
+        const raw = String(options.autoGitCommit).trim().toLowerCase();
+        if (raw !== 'true' && raw !== 'false') {
+          console.error(chalk.red('Error: --auto-git-commit takes true or false.'));
+          process.exit(1);
+          return;
+        }
+        autoGitCommit = raw === 'true';
+      }
+      if (options.verifyCommand === undefined && autoGitCommit === undefined && Object.keys(updates).length === 0) {
+        console.error(chalk.yellow('Nothing to update. Pass at least one of --name, --description, --verify-command, --auto-git-commit.'));
         process.exit(1);
         return;
       }
@@ -1665,9 +1676,10 @@ program
       if (Object.keys(updates).length > 0) {
         ({ data } = await axios.put(`${API_URL}/projects/${id}`, updates));
       }
-      // verifyCommand is a privileged shell string — set it via the internal
-      // endpoint with the install-time token (mirrors `agenfk backup`).
-      if (options.verifyCommand !== undefined) {
+      // verifyCommand is a privileged shell string, and autoGitCommit makes the
+      // server run git in the working tree — both go through the internal
+      // endpoints with the install-time token (mirrors `agenfk backup`).
+      if (options.verifyCommand !== undefined || autoGitCommit !== undefined) {
         const tokenPath = path.join(os.homedir(), '.agenfk', 'verify-token');
         if (!fs.existsSync(tokenPath)) {
           console.error(chalk.red('Error: ~/.agenfk/verify-token not found. Run npm run install:framework first.'));
@@ -1675,11 +1687,20 @@ program
           return;
         }
         const token = fs.readFileSync(tokenPath, 'utf8').trim();
-        ({ data } = await axios.put(
-          `${API_URL}/projects/${id}/verify-command`,
-          { verifyCommand: options.verifyCommand },
-          { headers: { 'x-agenfk-internal': token } },
-        ));
+        if (options.verifyCommand !== undefined) {
+          ({ data } = await axios.put(
+            `${API_URL}/projects/${id}/verify-command`,
+            { verifyCommand: options.verifyCommand },
+            { headers: { 'x-agenfk-internal': token } },
+          ));
+        }
+        if (autoGitCommit !== undefined) {
+          ({ data } = await axios.put(
+            `${API_URL}/projects/${id}/auto-git-commit`,
+            { autoGitCommit },
+            { headers: { 'x-agenfk-internal': token } },
+          ));
+        }
       }
       console.log(chalk.green(`✓ Project ${id} updated.`));
       if (data !== undefined) console.log(structuredOutput(data));
@@ -1778,6 +1799,27 @@ program
       }
     } catch {
       console.log(chalk.gray('N/A (server does not report capabilities)'));
+    }
+
+    // 3b. Auto-commit is per-project, not a global capability, so it cannot be a
+    // flag line above. It is worth naming here because it is the setting that
+    // lets the server run `git add -A && git commit` in a working tree
+    // (contradiction C5): the reader should know which projects have it on.
+    process.stdout.write('Checking auto-commit on DONE... ');
+    try {
+      const { data: projects } = await axios.get(`${API_URL}/projects`);
+      const enabled = (Array.isArray(projects) ? projects : []).filter((p: any) => p?.autoGitCommit);
+      if (enabled.length === 0) {
+        console.log(chalk.green('off for all projects'));
+      } else {
+        console.log(chalk.yellow(`on for ${enabled.length} project(s)`));
+        for (const p of enabled) {
+          console.log(chalk.yellow(`   - ${p.name} (${String(p.id).slice(0, 8)}) — commits the whole tree at ${p.projectRoot || 'the resolved project root'} on DONE`));
+        }
+        console.log(chalk.gray('   Turn off with: agenfk update-project <id> --auto-git-commit false'));
+      }
+    } catch {
+      console.log(chalk.gray('N/A (could not list projects)'));
     }
 
     // 4. MCP Config Check

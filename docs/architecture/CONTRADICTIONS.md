@@ -20,7 +20,7 @@ decision before the owning task can proceed.
 | C2 | plan §1.3 | Spec requires transactional migrations; repo has no migration framework | deferred | T03 (ADR-0002) |
 | C3 | plan §1.3 | Three pause/resume vocabularies will coexist | deferred | T03, T08 (ADR-0003 D6) |
 | C4 | plan §1.3 | Spec suggests new packages; repo convention is a `server.ts` monolith | resolved | T02 (ADR-0001) |
-| C5 | plan §1.3 | `autoGitCommit` runs `git add -A` inside the validate handler | deferred | T07, T25 |
+| C5 | plan §1.3 | `autoGitCommit` runs `git add -A` inside the validate handler | hazard closed; design deferred | BUG 2df0f02f (done), T07, T25 |
 | C6 | plan §1.3 | Spec requires a privacy pipeline; hub outbox has no redaction layer | deferred | T05, T32 |
 | C7 | plan §1.3 | Spec requires per-execution identity; repo has one shared `verify-token` | deferred | T19 |
 | C8 | plan §1.3 | Two commit conventions; `CHANGELOG.md` is stale | resolved | T02 |
@@ -94,8 +94,20 @@ into a commit.
 **Observed in T01.** It did not fire destructively only because the tree happened to
 be clean at the moment of transition — luck, not design.
 
-**Resolution.** Deferred to T07/T25: auto-commit becomes worktree-scoped and
-execution-aware, and never runs `git add -A` across an unbound tree.
+**Hazard closed** by BUG `2df0f02f-7533-4733-b935-3a73f749fa22`, ahead of T03,
+because an unattended worker could not run here while it stood. Auto-commit is now
+**off unless the project opts in** (`project.autoGitCommit`, set through the
+internal-token route `PUT /projects/:id/auto-git-commit` or `agenfk update-project
+<id> --auto-git-commit true`), and it refuses any project root that is not itself
+the toplevel of a git repository or worktree, the home directory included. Every
+refusal is logged with its reason. The helper gained an exec seam and its first
+tests — it had none, because all four call sites sit behind the vitest guard.
+
+**Design still deferred** to T07/T25: worktree-scoped, execution-aware auto-commit
+— one that knows which `Execution` and which `WorktreeBinding` it belongs to and
+never runs `git add -A` across an unbound tree. Opting in still sweeps the whole
+tree at the project root; the guards bound *where* that happens, not *what* it
+stages.
 
 ### C6 — No redaction layer on the Hub outbox
 

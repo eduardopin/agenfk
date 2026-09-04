@@ -174,6 +174,7 @@ export interface Project {
   verifyCommand?: string; // Project-level verification command (e.g. "npm run build && npm test")
   flowId?: string;        // ID of the active Flow for this project (falls back to DEFAULT_FLOW)
   projectRoot?: string;   // Absolute path to the project's root directory (set automatically by MCP on validate)
+  autoGitCommit?: boolean; // Opt in to `git add -A && git commit` when an item reaches DONE. Absent means OFF (BUG 2df0f02f / contradiction C5).
   createdAt: Date;
   updatedAt: Date;
 }

@@ -533,20 +533,81 @@ const syncParentStatus = async (parentId: string) => {
   }
 };
 
-const autoGitCommit = async (item: AgEnFKItem, projectRoot: string): Promise<{ success: boolean; output: string; error?: string }> => {
+/**
+ * Auto-commit on DONE — opt in, and refused outside the repository root.
+ *
+ * This runs `git add -A`, which stages the *entire* working tree at
+ * `projectRoot`, not the files belonging to the item being closed. With more
+ * than one worktree active it sweeps unrelated work into a commit; combined
+ * with the unbounded `findProjectRoot` it could do so in the user's home
+ * directory. See contradiction C5 and BUG `2df0f02f-7533-4733-b935-3a73f749fa22`.
+ *
+ * Two things hold it back now. It is **off unless the project opts in**
+ * (`project.autoGitCommit`), and it refuses any `projectRoot` that is not
+ * itself the toplevel of a git repository or worktree — a subdirectory or the
+ * home directory is a resolution failure, not a place to commit. Every refusal
+ * is logged with its reason.
+ *
+ * Worktree-scoped, execution-aware auto-commit — one that knows which Execution
+ * and which WorktreeBinding it belongs to — remains T07/T25. This closes the
+ * hazard; it does not deliver that design.
+ */
+export type AutoGitCommitResult = { success: boolean; output: string; error?: string; skipped?: string };
+
+// Injected so the helper is reachable under vitest: the four call sites are
+// behind `NODE_ENV !== 'test' && !VITEST` precisely so no test ever commits,
+// which left this function with no coverage at all. Same seam as
+// `setReleasesUpdateExecImpl` below.
+type AutoGitCommitExecImpl = typeof exec;
+let autoGitCommitExecImpl: AutoGitCommitExecImpl | null = null;
+export const setAutoGitCommitExecImpl = (impl: AutoGitCommitExecImpl): void => {
+  autoGitCommitExecImpl = impl;
+};
+export const resetAutoGitCommitExecImpl = (): void => {
+  autoGitCommitExecImpl = null;
+};
+
+export const autoGitCommit = async (
+  item: AgEnFKItem,
+  projectRoot: string,
+  project?: Project | null,
+): Promise<AutoGitCommitResult> => {
+  const timestamp = () => new Date().toISOString();
+
+  if (!(project as any)?.autoGitCommit) {
+    const reason = `auto-commit is off for project ${item.projectId}; enable it with \`agenfk update-project <id> --auto-git-commit true\``;
+    console.log(`[${timestamp()}] [AUTO_GIT] Skipped: ${reason}`);
+    return { success: false, output: '', skipped: reason };
+  }
+  if (!projectRoot) {
+    const reason = 'no project root resolved';
+    console.warn(`[${timestamp()}] [AUTO_GIT] Refused: ${reason}`);
+    return { success: false, output: '', skipped: reason };
+  }
+  if (path.resolve(projectRoot) === path.resolve(os.homedir())) {
+    const reason = `refusing to commit in the home directory (${projectRoot})`;
+    console.warn(`[${timestamp()}] [AUTO_GIT] Refused: ${reason}`);
+    return { success: false, output: '', skipped: reason };
+  }
+  if (!isRepoToplevel(projectRoot)) {
+    const reason = `project root ${projectRoot} is not the toplevel of a git repository or worktree`;
+    console.warn(`[${timestamp()}] [AUTO_GIT] Refused: ${reason}`);
+    return { success: false, output: '', skipped: reason };
+  }
+
   const message = `close(${item.type.toLowerCase()}): ${item.title} [${item.id}]`;
   const cmd = `git add -A && git commit -m ${JSON.stringify(message)}`;
-  
+  const run = autoGitCommitExecImpl || exec;
+
   return new Promise((resolve) => {
-    exec(cmd, { cwd: projectRoot }, (err, stdout, stderr) => {
-      const timestamp = new Date().toISOString();
+    run(cmd, { cwd: projectRoot }, (err: any, stdout: any, stderr: any) => {
       if (err) {
-        const errMsg = err.message.trim();
-        console.log(`[${timestamp}] [AUTO_GIT] Commit failed: ${errMsg}`);
+        const errMsg = String(err.message).trim();
+        console.log(`[${timestamp()}] [AUTO_GIT] Commit failed: ${errMsg}`);
         resolve({ success: false, output: stderr || stdout, error: errMsg });
       } else {
-        console.log(`[${timestamp}] [AUTO_GIT] Committed: "${message}"\n${stdout.trim()}`);
-        resolve({ success: true, output: stdout.trim() });
+        console.log(`[${timestamp()}] [AUTO_GIT] Committed: "${message}"\n${String(stdout).trim()}`);
+        resolve({ success: true, output: String(stdout).trim() });
       }
     });
   });
@@ -1036,6 +1097,27 @@ app.put("/projects/:id/verify-command", asyncHandler(async (req: any, res: any) 
   }
   try {
     const updated = await storage.updateProject(req.params.id, { verifyCommand } as any);
+    io.emit('items_updated');
+    res.json(updated);
+  } catch (error) {
+    res.status(404).json({ error: "Project not found" });
+  }
+}));
+
+// autoGitCommit makes the server run `git add -A && git commit` on the DONE
+// transition, so turning it on is privileged for the same reason verifyCommand
+// is: it is not a field an unauthenticated browser or LAN peer may set.
+// (Contradiction C5 / BUG 2df0f02f.)
+app.put("/projects/:id/auto-git-commit", asyncHandler(async (req: any, res: any) => {
+  if (req.headers['x-agenfk-internal'] !== VERIFY_TOKEN) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const { autoGitCommit: enabled } = req.body ?? {};
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: "autoGitCommit (boolean) required" });
+  }
+  try {
+    const updated = await storage.updateProject(req.params.id, { autoGitCommit: enabled } as any);
     io.emit('items_updated');
     res.json(updated);
   } catch (error) {
@@ -2236,7 +2318,7 @@ app.post("/items/bulk", asyncHandler(async (req: any, res: any) => {
         if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
           const proj = await storage.getProject(updated.projectId);
           const projectRoot = (proj as any)?.projectRoot || findProjectRoot(process.cwd());
-          await autoGitCommit(updated, projectRoot);
+          await autoGitCommit(updated, projectRoot, proj);
         }
       }
     } catch (e) {
@@ -2404,7 +2486,7 @@ app.put("/items/:id", asyncHandler(async (req: any, res: any) => {
         if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
           const proj = await storage.getProject(updated.projectId);
           const projectRoot = (proj as any)?.projectRoot || findProjectRoot(process.cwd());
-          await autoGitCommit(updated, projectRoot);
+          await autoGitCommit(updated, projectRoot, proj);
         } else {
           console.log(`[TEST_MODE] Skipping auto-git commit for item ${updated.id}`);
         }
@@ -2614,7 +2696,7 @@ async function handleValidateProgress(itemId: string, command: string | undefine
         const updated = await storage.updateItem(itemId, updates);
         io.emit('items_updated');
         if (updated.parentId) await syncParentStatus(updated.parentId);
-        if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) autoGitCommit(updated, (project as any)?.projectRoot || findProjectRoot(process.cwd()));
+        if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) autoGitCommit(updated, (project as any)?.projectRoot || findProjectRoot(process.cwd()), project);
         return res.json({ status: Status.DONE, message: `✅ Validation Passed (sibling propagation)!\n\nItem moved to DONE.${pushInstruction}`, output: 'Sibling propagation' });
       }
     } else {
@@ -2714,7 +2796,7 @@ async function handleValidateProgress(itemId: string, command: string | undefine
       if (nextStatus === Status.DONE && process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
         // Advisory: a git-commit failure must not report a PASSED validation
         // (whose transition already landed) as failed to the run follower.
-        try { await autoGitCommit(updated, projectRoot); }
+        try { await autoGitCommit(updated, projectRoot, project); }
         catch (e: any) { console.error(`[validate] autoGitCommit failed after DONE: ${e?.message || e}`); }
       }
       recordHubEvent({

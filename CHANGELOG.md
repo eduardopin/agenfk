@@ -21,11 +21,31 @@ All notable changes to AgEnFK are documented here.
   the first `express.Router()` module in `packages/server`.
 - **`agenfk health`** now reports the Autonomous Delivery flags. A server without
   the endpoint is reported as such and is not counted as a health issue.
+- **`agenfk update-project --auto-git-commit <true|false>`** and the internal-token
+  route `PUT /projects/:id/auto-git-commit`, the only ways to switch auto-commit on.
+  Like `verifyCommand`, it is privileged: it decides whether the server runs `git`
+  in a working tree, so it is not settable through the open `PUT /projects/:id`.
+  `agenfk health` also names the projects that have it on, and where they would
+  commit.
 - **Architecture records**: `docs/architecture/INVENTORY.md` (the 1.1.16 baseline
   with verified file:line references), `docs/architecture/CONTRADICTIONS.md`
   (C1–C19) and `docs/adr/` with ADR-0001 (component boundaries and package
   layout), ADR-0002 (schema migration framework for `node:sqlite`) and ADR-0003
   (Durable Execution scope).
+
+### Changed
+- **BREAKING (behaviour): auto-commit on DONE is now opt-in.** When an item reached
+  DONE the server ran `git add -A && git commit` at the project root — the entire
+  working tree, not the files belonging to the item. It is now **off unless the
+  project opts in**. Existing projects keep behaving as before only after running:
+
+  ```
+  agenfk update-project <project-id> --auto-git-commit true
+  ```
+
+  The default was flipped rather than merely guarded because the command stages
+  everything in the tree, and with per-task git worktrees — which the workflow now
+  expects — that sweeps unrelated work into a commit. Contradiction C5.
 
 ### Fixed
 - Documentation stated that storage used `better-sqlite3`. It has always used
@@ -35,6 +55,20 @@ All notable changes to AgEnFK are documented here.
 - `CONTRIBUTING.md` now documents both commit forms in use: conventional commits
   for humans and agents, and the server's `close(<type>): <title> [<id>]`
   auto-commit.
+- **`findProjectRoot` escaped to the user's home directory from a git worktree.**
+  The walk looked for any `.agenfk` ancestor with no repository boundary; a worktree
+  has none of its own, so the search climbed until it found the framework's own
+  `~/.agenfk` and returned `$HOME`. The server persisted that as
+  `project.projectRoot` and ran the project's `verifyCommand` there — and, before
+  the change above, `git add -A && git commit` as well. A `.agenfk` marker now
+  counts only at or below the caller's git toplevel, `os.homedir()` never counts,
+  and a worktree resolves to its own root. The two divergent copies of the walk, in
+  `server.ts` and the MCP entry point `index.ts`, are now one module,
+  `packages/server/src/project-root.ts`.
+- **A change of `project.projectRoot` is no longer silent**: the server logs the
+  repoint with the directory it resolved from, and records it as an item comment.
+- **`autoGitCommit` refuses to run outside a repository root**, the home directory
+  included, and every refusal is logged with its reason.
 
 ## [1.1.0-beta.2] — 2026-06-23
 

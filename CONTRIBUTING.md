@@ -52,7 +52,9 @@ Two commit forms exist in this repository, and only the first is yours to write:
 - **Server auto-commits** are written by AgEnFK itself when an item reaches DONE,
   in the form `close(<type>): <title> [<id>]`. Do not reformat them and do not
   imitate the form by hand — it is how the audit trail distinguishes a verified
-  workflow transition from an ordinary commit.
+  workflow transition from an ordinary commit. They are **off by default**: a
+  project opts in with `agenfk update-project <id> --auto-git-commit true`, and
+  even then the server refuses to commit anywhere but a git toplevel.
 
 Every functional change also updates `CHANGELOG.md` under `[Unreleased]`.
 
