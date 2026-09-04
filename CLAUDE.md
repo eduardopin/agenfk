@@ -76,7 +76,7 @@ The old version is read from the root `package.json`; commit the manifest change
 
 **Single Owner**: the API server in `packages/server` is the only writer of state. CLI, MCP clients, and UI all go through its REST endpoints; updates fan out over Socket.io. Never read `.agenfk/db.sqlite` directly from other packages — go through the storage interface in `core`.
 
-**Storage**: SQLite-only via `better-sqlite3` (`packages/storage-sqlite`). The repo previously supported `db.json`; existing JSON DBs are auto-migrated by the installer. WAL mode + indexed schema.
+**Storage**: SQLite-only via Node's built-in **`node:sqlite`** (`DatabaseSync`, synchronous API, requires Node ≥ 22.5) in `packages/storage-sqlite` — *not* `better-sqlite3`, so there is no native build step. The repo previously supported `db.json`; existing JSON DBs are auto-migrated by the installer. WAL mode + indexed schema. Schema is created by `CREATE TABLE IF NOT EXISTS` on every `init()`; there is no migration framework yet (see `docs/adr/0002-schema-migration-framework-node-sqlite.md`).
 
 **Workflow engine** (`packages/core` + enforced by `packages/server`):
 - Items have type (EPIC / STORY / TASK / BUG) and move through a configurable **Flow** of `FlowStep`s (default: TODO → IN_PROGRESS → REVIEW → TEST → DONE; per-project flows override this).

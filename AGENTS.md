@@ -61,7 +61,7 @@ and the regenerated lockfile together so they never drift. The release commands
   state. CLI, MCP clients, and UI all go through its REST endpoints; updates fan
   out over Socket.io. Never read `.agenfk/db.sqlite` directly — go through the
   storage interface in `core`.
-- **Storage**: SQLite-only via `better-sqlite3` (`packages/storage-sqlite`), WAL mode.
+- **Storage**: SQLite-only via Node's built-in **`node:sqlite`** (`DatabaseSync`, requires Node ≥ 22.5) in `packages/storage-sqlite`, WAL mode — *not* `better-sqlite3`.
 - **Workflow engine** (`packages/core`, enforced by `packages/server`): items
   (EPIC/STORY/TASK/BUG) move through a configurable **Flow** of `FlowStep`s.
   Forward transitions are gated by `validate_progress`; DONE is reachable only via
