@@ -124,7 +124,63 @@ default to `false`, so a default installation behaves exactly as 1.1.16 did.
 
 ## Verification
 
-<!-- VERIFICATION -->
+Gate: the project `verifyCommand`, `npm run build && npm test`.
+
+| Check | Result |
+|---|---|
+| `npm run build` | exit 0, all 9 packages |
+| Full suite | **222 files, 2,452 passed, 1 skipped, exit 0** (866 s) |
+| Baseline for comparison (plan §1.4, confirmed in T01) | 219 files, 2,368 passed, 1 skipped |
+| Delta | +3 files, +84 tests. No test deleted, renamed away, skipped or weakened — the diff adds three test files and touches no existing one |
+| `cli.test.ts` (excluded from the root run; executed by nothing — C18) | run explicitly: 34 passed |
+
+### Coverage
+
+Per-file, for the code this task adds — the number plan §6.1 actually requires:
+
+| File | Statements | Branches | Functions |
+|---|---:|---:|---:|
+| `packages/core/src/features.ts` | 100% | 100% | 100% |
+| `packages/server/src/routes/capabilities.ts` | 100% | 100% | 100% |
+
+Global figure **unchanged, and not green**: statements 83.89%, branches 74.63%,
+functions 86.23%, lines 86.84%. `npm run test:coverage` exits non-zero on an unmodified
+checkout because branches are below the 80% threshold. That is contradiction **C20**,
+pre-existing debt, now decided and tracked as TASK `47b3727a`. It was not "fixed" by
+lowering the threshold.
+
+### Mutation testing
+
+Not required by the project's active flow, which has no MUTATE step. Run anyway, using
+the protocol in `flow-agenfk-delivery.md`: one mutation at a time, tree restored and
+verified between each, no mutation committed.
+
+**Two of eight mutations initially SURVIVED — both files were at 100% coverage.** That is
+the finding: line coverage said these tests were exhaustive and they were not.
+
+| # | Mutation | Before fix | After fix |
+|---|---|---|---|
+| M1 | precedence: drop the `continue` so config overrides env | 10 red | 10 red |
+| M2 | boundary: unrecognised env value resolves to `true` instead of being ignored | **SURVIVED** | 10 red |
+| M3 | default flipped: `autonomousDelivery` defaults to enabled | 10 red | 15 red |
+| M4 | truthy set: drop `'yes'` | 3 red | 3 red |
+| M5 | wrong-but-plausible: `foundationGate` reports `'present'` | 2 red | 2 red |
+| M6 | off-by-one: schema version 1 → 2 | **SURVIVED** | 1 red |
+| M7 | alias removed: only the versioned path served | 2 red | 2 red |
+| M8 | guard removed: malformed config throws instead of returning undefined | 4 red | 4 red |
+
+**M2** — every "ignores the unrecognised value" case paired the bad value with a config
+that *enabled* the flag, so the expected result was `true` whether the code fell through
+correctly or wrongly resolved the env value to `true`. Fixed by adding, per value, a case
+with the config explicitly disabling and a case with no config at all.
+
+**M6** — the contract test asserted the response against the same constant the response is
+built from, so bumping the constant moved both sides and the test could never fail. Fixed
+by asserting the literal.
+
+Both fixes are commit `0a219ea1`. Tests went 74 → 84; coverage did not move, because it
+was already 100%.
+
 
 ## Token usage
 
