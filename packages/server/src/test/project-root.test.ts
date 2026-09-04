@@ -134,6 +134,13 @@ describe("resolveProjectRoot", () => {
     });
   });
 
+  it("does not throw when the caller's directory does not exist", () => {
+    // `realpath` throws on a missing path; the resolver must degrade to a
+    // resolved absolute path rather than take down the validate request.
+    const missing = path.join(tmp, "gone", "deeper");
+    expect(resolveProjectRoot(missing)).toEqual({ root: missing, source: "fallback" });
+  });
+
   it("falls back to the caller's directory outside any repository", () => {
     const plain = path.join(tmp, "not-a-repo");
     fs.mkdirSync(plain, { recursive: true });
