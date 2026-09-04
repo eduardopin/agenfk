@@ -189,14 +189,37 @@ available. The harness context counter is reported instead, labelled for what it
 order-of-magnitude proxy, not a measurement. See C13 — `agenfk tokens --item` returns
 nothing, so the plan's intended instrument is still unavailable.
 
-**Against the card's 400k envelope the 450k split trigger was never approached.**
+The 450k split trigger was never approached; no checkpoint or T02-b was needed.
 
-Unlike T01, this session ran on the model and effort the card specifies (Opus 5, `xhigh`),
-so it **is** a valid calibration point for the §3.5 cost table.
+This session ran on the model and effort the card specifies (Opus 5, `xhigh`), so it is
+the first task that *could* be a valid calibration point for the §3.5 cost table. It is
+weakened as one by scope that arrived mid-session and is not T02 work: a Herdr/terminal
+configuration task, and a full read of the sharkverify orchestrator. Treat the figure as
+an upper bound for T02 proper, and prefer T03 for calibration.
 
 ## Close-out
 
-<!-- CLOSEOUT -->
+| Step (plan Appendix F) | Result |
+|---|---|
+| 1. Prove the Definition of Done | `npm run build` exit 0 (9 packages); full suite 222 files, 2,452 passed, 1 skipped, exit 0; eight-mutation protocol, all caught |
+| 2. Close the item | `IN_PROGRESS → REVIEW → TEST → DONE`, each through `agenfk verify` with evidence. **All three transitions passed by sibling propagation**, so the server did not itself re-execute `npm run build` or the `verifyCommand` — every number above was produced by running the commands directly in this worktree. Recorded rather than presented as a server-side proof |
+| 3. Ship the PR | **not done — awaiting owner authorisation.** The branch is unpushed |
+| 4. Handoff | this file |
+| 5. Registries | `docs/plans/items.md` still needs T02's row; `session-notes.md` not updated |
+| 6. Next kickoff | T03 prompt not yet emitted |
+
+`autoGitCommit` fired on the DONE transition and swept nothing: the tree was clean because
+every artefact had already been committed. That is the mitigation for contradiction C5
+working by discipline rather than by design — with one uncommitted file it would have
+produced a `close(task): …` commit containing whatever happened to be lying around.
+
+**New items created during T02:**
+
+| Id | Type | Why |
+|---|---|---|
+| `37660bd2` | BUG | `findProjectRoot` escapes to `$HOME` from a git worktree and runs `verifyCommand` and `git add -A` there |
+| `47b3727a` | TASK | Raise branch coverage to the 80% gate (C20); currently 74.63% |
+
 
 ## What T03 must know
 
