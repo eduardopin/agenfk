@@ -71,6 +71,24 @@ describe('environment parsing', () => {
       });
       expect(flags.autonomousDelivery.enabled).toBe(true);
     });
+
+    // The test above cannot fail if an unrecognised value wrongly resolved to
+    // `true`: both paths give the same answer. These two pin the value down —
+    // an unrecognised env value must be *ignored*, not treated as enabled.
+    it(`does not treat the unrecognised value ${JSON.stringify(raw)} as enabled when the config disables it`, () => {
+      const flags = resolveFeatureFlags({
+        env: { [FEATURE_ENV_VARS.autonomousDelivery]: raw },
+        config: { autonomousDelivery: { enabled: false } },
+      });
+      expect(flags.autonomousDelivery.enabled).toBe(false);
+    });
+
+    it(`does not treat the unrecognised value ${JSON.stringify(raw)} as enabled with no config at all`, () => {
+      const flags = resolveFeatureFlags({
+        env: { [FEATURE_ENV_VARS.autonomousDelivery]: raw },
+      });
+      expect(flags.autonomousDelivery.enabled).toBe(false);
+    });
   }
 
   it('leaves a flag off when its variable is unset but a sibling is set', () => {

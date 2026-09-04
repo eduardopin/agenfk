@@ -84,7 +84,11 @@ describe('GET /v1/capabilities', () => {
       'schemaVersion',
       'version',
     ]);
-    expect(res.body.schemaVersion).toBe(CAPABILITIES_SCHEMA_VERSION);
+    // Asserted as a literal on purpose. Comparing the response against the
+    // imported constant is a tautology: bumping the constant moves both sides
+    // and the test can never fail. A version bump must break this line.
+    expect(res.body.schemaVersion).toBe(1);
+    expect(CAPABILITIES_SCHEMA_VERSION).toBe(1);
     expect(typeof res.body.version).toBe('string');
     expect(res.body.version.length).toBeGreaterThan(0);
     expect(res.body.foundationGate).toBe('unknown');
