@@ -6,7 +6,7 @@
 **Source specification:** `AGENFK_AUTONOMOUS_DELIVERY_MASTER_SPEC.md` v1.0 (2026-09-02)
 **Target repository:** `cglab-public/agenfk` (`main` @ `2b3761b6`, version 1.1.16, 1,084 commits)
 **Working copy:** `/home/pin/projects/agenfk` (clone of `main`, dependencies installed, build green)
-**Implementation client:** Claude Code 2.1.233 (primary), Codex CLI (installed, reviewer/fallback), Pi 0.84.4 (installed), Herdr 0.8.2 (installed)
+**Implementation client:** Claude Code 2.1.259 (primary), Codex CLI (installed, reviewer/fallback), Pi 0.84.4 (installed), Herdr 0.8.2 (installed)
 **Plan shape:** 33 chained tasks, each bounded at **≤ 700k total model tokens**, grouped into 7 phases
 
 ---
@@ -116,7 +116,7 @@ Consequence: the spec's foundation gate (§5) fails today. AD4–AD6 cannot laun
 | Item | Why | Command / note |
 |---|---|---|
 | **Courtesy notice to upstream** (optional, not required by ISC) | GitHub Discussions are disabled on the upstream repo; `CONTRIBUTING.md` points to issues with the `question` label; org contact `opensource@cglab.com` | open one issue describing the Autonomous Delivery fork and the intent to send PRs, or email; keep the `LICENSE` file and the CG/lab copyright in the fork |
-| **Trust the workspace** in an interactive Claude Code session | project-scoped `.claude/settings.json` (plugins, hooks) is ignored until `hasTrustDialogAccepted` is set for `/home/pin/projects/agenfk`; still not accepted as of 2026-09-03 | open `claude` in the directory once and accept the trust dialog |
+| ~~**Trust the workspace** in an interactive Claude Code session~~ — *done, verified in T01* | project-scoped `.claude/settings.json` (plugins, hooks) is ignored until `hasTrustDialogAccepted` is set for `/home/pin/projects/agenfk` | accepted; the Appendix D skill-listing check reports 46 skills, 19 of them from the project-scoped plugins |
 | Start **Herdr** server once and capture its API schema | MVP runtime (AD6) is installed; T20 contract tests need the schema snapshot | `herdr` (launches the persistent session) or `herdr status`; `herdr api schema --json > docs/runtime/herdr-api-schema.json` (protocol 20) |
 | Confirm **Pi** provider config for LiteLLM (D8) | Pi 0.84.4 installed; `pi --provider <name> --model <pattern>`, `pi auth`, `pi install <extension>` exist | `pi auth` and `pi --help`; document in `docs/runtime/pi.md` |
 | Codex CLI | already installed (`~/.local/bin/codex`); used as independent reviewer (AD6 fixtures, AD7 separation of duties) | — |
@@ -139,7 +139,7 @@ The chain is executed on the same stack the product is being built to orchestrat
 | Layer | What runs it | Notes |
 |---|---|---|
 | Runtime | **Herdr 0.8.2**, server running, socket `~/.config/herdr/herdr.sock`, protocol 20 | one workspace `agenfk` on `/home/pin/projects/agenfk`; one pane per task, one extra pane for the reviewer |
-| Primary harness | **Claude Code 2.1.233** in a Herdr pane | model and effort per the task card (§3.5); `herdr integration install claude` gives Herdr session identity for restore |
+| Primary harness | **Claude Code 2.1.259** in a Herdr pane | model and effort per the task card (§3.5); `herdr integration install claude` gives Herdr session identity for restore |
 | Secondary harness | **Pi 0.84.4** (`@earendil-works/pi-coding-agent`, MIT), provider `anthropic` **ready** | `herdr integration install pi` makes Pi a Herdr lifecycle authority (semantic idle/working/blocked, not screen scraping) — the strongest signal available for T20/T21 |
 | Independent reviewer | **Codex CLI** or Pi, in a separate pane | separation of duties (spec §13.3): the harness that authored a change is never its sole reviewer |
 | Control plane | **AgEnFK 1.1.17-beta.5** installed globally; server on port 3001; DB `~/.agenfk-system/.agenfk/db.sqlite`; project `agenfkplus` (`ef5f9e00-b80d-4f9a-9a82-846479156f2d`) | the board is authoritative: no file is edited without an active item and a `agenfk gatekeeper` pass |
@@ -1238,7 +1238,7 @@ Enable ad hoc (installed marketplaces, free): `documentation-generation` (ADR + 
 
 | Tool | State |
 |---|---|
-| Claude Code 2.1.233 | installed |
+| Claude Code 2.1.259 | installed |
 | Codex CLI | installed (`~/.local/bin/codex`) |
 | `gh` (authenticated as the owner's account) | installed |
 | Node 22.23.1, npm, pnpm, bun | installed |

@@ -1759,7 +1759,28 @@ program
       issues++;
     }
 
-    // 3. MCP Config Check
+    // 3. Autonomous Delivery feature flags — reported by the server, which is
+    // the single authority for them. An older server has no /v1/capabilities;
+    // that is not a health issue, so it does not count towards `issues`.
+    process.stdout.write('Checking Autonomous Delivery flags... ');
+    try {
+      const { data } = await axios.get(`${API_URL}/v1/capabilities`);
+      const flags = (data && data.flags) || {};
+      const names = Object.keys(flags);
+      console.log(chalk.green('OK'));
+      if (names.length === 0) {
+        console.log(chalk.gray('   - (none reported)'));
+      } else {
+        for (const name of names) {
+          const enabled = !!(flags[name] && flags[name].enabled);
+          console.log(chalk.gray(`   - ${name}: ${enabled ? 'on' : 'off'}`));
+        }
+      }
+    } catch {
+      console.log(chalk.gray('N/A (server does not report capabilities)'));
+    }
+
+    // 4. MCP Config Check
     process.stdout.write('Checking Opencode MCP Config... ');
     const opencodeConfig = path.join(os.homedir(), '.config', 'opencode', 'opencode.json');
     if (fs.existsSync(opencodeConfig)) {
@@ -1780,7 +1801,7 @@ program
       console.log(chalk.gray('N/A (Opencode not detected)'));
     }
 
-    // 4. Skills Check
+    // 5. Skills Check
     process.stdout.write('Checking Global Skills... ');
     const skillPath = path.join(os.homedir(), '.config', 'opencode', 'skills', 'agenfk', 'SKILL.md');
     if (fs.existsSync(skillPath)) {

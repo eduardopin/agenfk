@@ -85,6 +85,7 @@ consumer of D9 (`zod/v4`). T20/T21 create `packages/runner-herdr` and
 
 - `grep -rn "from '\.\./server'" packages/server/src/routes/` must return nothing (D4).
 - `grep -rnE "from ['\"]node:|require\(['\"](fs|path|os)" packages/core/src/` must return nothing (D2/D5).
+- No file in `packages/core/src/` reads `process.env` in code (D5). Strip comments before grepping — the flag module names the variable in its documentation.
 - `packages/core/package.json` `dependencies` must stay absent (D2).
 - Every new router module has a unit test that constructs it with stub dependencies and no server boot (D4).
 - New route paths in `packages/server/src/routes/` start with `/v1/` (D6); the single documented exception is the `/capabilities` alias.

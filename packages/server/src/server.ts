@@ -34,6 +34,7 @@ export const VERIFY_TOKEN = (() => {
 import { exec, execSync, execFileSync, spawn } from "child_process";
 import { createServer } from "http";
 import { Server } from "socket.io";
+import { createCapabilitiesRouter, readFeatureConfig } from "./routes/capabilities.js";
 
 // The local API server is for this machine only. It binds to loopback by
 // default (override with AGENFK_HOST) and only accepts browser requests from
@@ -926,6 +927,15 @@ app.get("/api/readme", asyncHandler(async (_req: any, res: any) => {
 app.get("/version", (_req: any, res: any) => {
   res.json({ version: getCurrentVersion() });
 });
+
+// Autonomous Delivery capability report (ADR-0001 D3/D4: the first router
+// module; routers are factories and never import back into this file).
+// `getVersion` is passed as a thunk because getCurrentVersion is declared
+// further down this module and would otherwise be in its temporal dead zone.
+app.use(createCapabilitiesRouter({
+  getVersion: () => getCurrentVersion(),
+  loadFeatureConfig: () => readFeatureConfig(),
+}));
 
 app.get("/api/telemetry/config", (_req: any, res: any) => {
   try {

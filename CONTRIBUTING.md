@@ -46,6 +46,16 @@ chore: update Z
 docs: improve README
 ```
 
+Two commit forms exist in this repository, and only the first is yours to write:
+
+- **Human and agent commits** use the conventional prefixes above.
+- **Server auto-commits** are written by AgEnFK itself when an item reaches DONE,
+  in the form `close(<type>): <title> [<id>]`. Do not reformat them and do not
+  imitate the form by hand — it is how the audit trail distinguishes a verified
+  workflow transition from an ordinary commit.
+
+Every functional change also updates `CHANGELOG.md` under `[Unreleased]`.
+
 ## Using AgEnFK to Build AgEnFK
 
 AgEnFK uses itself for its own development workflow. If you have AgEnFK running locally, use it to track your work. If not, a standard PR workflow is fine.

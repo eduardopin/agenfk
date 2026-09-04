@@ -315,6 +315,14 @@ T02 (this task) adds documentation, three ADRs, an off-by-default feature-flag
 resolver in `core`, the first router module (`/v1/capabilities`), and flag reporting in
 `agenfk health`. **No orchestration behaviour, no schema change, no new dependency.**
 
+> **Line-number caveat.** Every reference above is valid at the `2b3761b6` baseline, which
+> is the point of this document. T02's own change mounts the capabilities router into
+> `server.ts` at `:931`, so on the T02 branch and afterwards **every `server.ts` reference
+> beyond `:927` has shifted by +10** (`getCurrentVersion` `:3704` → `:3714`, the last route
+> `:3822` → `:3832`, the socket handler `:3869` → `:3879`, the exports `:3928` → `:3938`).
+> Later tasks that move these lines again should append to this note rather than rewrite the
+> baseline table, so the drift stays auditable.
+
 T03 adds the migration framework (ADR-0002), the machine-checkable foundation gate,
 `agenfk project doctor`, the CLI namespace-collision suite and the Standard/Deep
 backwards-compatibility suite.

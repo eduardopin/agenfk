@@ -2,6 +2,40 @@
 
 All notable changes to AgEnFK are documented here.
 
+> The entries between `1.1.0-beta.2` and the current package version (1.1.16) were
+> never written down. They are **not** reconstructed here: the history is not
+> reliably recoverable from commit messages alone, and inventing it would be worse
+> than the gap. New work is recorded from `[Unreleased]` onward.
+
+## [Unreleased]
+
+### Added
+- **Autonomous Delivery feature flags** (`@agenfk/core`): `autonomousDelivery`,
+  `durableExecution` and `localProcessRuntime`, resolved from
+  `AGENFK_FEATURE_*` environment variables, then the `features` key of
+  `~/.agenfk/config.json`, then a default of **off**. Nothing new runs unless a
+  flag is explicitly switched on.
+- **`GET /v1/capabilities`** (and the unversioned `/capabilities` alias) reporting
+  the server version, the feature flags and a `foundationGate: "unknown"`
+  placeholder that T03 replaces with a real Durable Execution evaluation. This is
+  the first `express.Router()` module in `packages/server`.
+- **`agenfk health`** now reports the Autonomous Delivery flags. A server without
+  the endpoint is reported as such and is not counted as a health issue.
+- **Architecture records**: `docs/architecture/INVENTORY.md` (the 1.1.16 baseline
+  with verified file:line references), `docs/architecture/CONTRADICTIONS.md`
+  (C1–C19) and `docs/adr/` with ADR-0001 (component boundaries and package
+  layout), ADR-0002 (schema migration framework for `node:sqlite`) and ADR-0003
+  (Durable Execution scope).
+
+### Fixed
+- Documentation stated that storage used `better-sqlite3`. It has always used
+  Node's built-in `node:sqlite`. Corrected in `CLAUDE.md`, `AGENTS.md` and
+  `AFK_ARCHITECTURE.md`, which also referred to a nonexistent
+  `agentic-framework/` directory and to `db.json` as the server's storage.
+- `CONTRIBUTING.md` now documents both commit forms in use: conventional commits
+  for humans and agents, and the server's `close(<type>): <title> [<id>]`
+  auto-commit.
+
 ## [1.1.0-beta.2] — 2026-06-23
 
 ### Changed

@@ -4,13 +4,13 @@
 AgenFK follows a **Single Owner Architecture** where a centralized API server manages the framework state, ensuring consistency across CLI, UI, and MCP clients.
 
 ## Project Structure (Monorepo)
-The project is organized as a TypeScript monorepo using npm workspaces under the `agentic-framework/` directory.
+The project is organized as a TypeScript monorepo using npm workspaces under the `packages/` directory at the repository root.
 
-- `agentic-framework/packages/core`: The foundation of the system. Contains all shared types, interfaces, and core logic for item lifecycle and state management.
-- `agentic-framework/packages/cli`: A command-line interface that allows developers and agents to interact with the framework (create items, update status, etc.).
-- `agentic-framework/packages/server`: The central API server built with Express. It manages the `db.json` storage and broadcasts updates via WebSockets.
-- `agentic-framework/packages/storage-sqlite`: A storage plugin implementing SQLite persistence via `better-sqlite3`. Uses WAL mode and an indexed schema for efficient queries.
-- `agentic-framework/packages/ui`: A modern web-based Kanban board built with React, Vite, Tailwind CSS, and TanStack Query.
+- `packages/core`: The foundation of the system. Contains all shared types, interfaces, and core logic for item lifecycle and state management.
+- `packages/cli`: A command-line interface that allows developers and agents to interact with the framework (create items, update status, etc.).
+- `packages/server`: The central API server built with Express. It owns the SQLite database and broadcasts updates via WebSockets. It is the only writer of state.
+- `packages/storage-sqlite`: A storage plugin implementing SQLite persistence via Node's built-in `node:sqlite` (`DatabaseSync`) — *not* `better-sqlite3`, so no native build step is required and Node ≥ 22.5 is mandatory. Uses WAL mode and an indexed schema for efficient queries.
+- `packages/ui`: A modern web-based Kanban board built with React, Vite, Tailwind CSS, and TanStack Query.
 
 ## Key Component Interactions
 1.  **Server as Source of Truth**: All state changes must go through the Server.
@@ -76,5 +76,5 @@ Codex's hook system reliably fires for the shell tool but not for `apply_patch` 
 - **Language**: TypeScript (Strong typing across the stack)
 - **Backend**: Node.js, Express, Socket.io
 - **Frontend**: React, Vite, Tailwind CSS, TanStack Query
-- **Storage**: SQLite only (`better-sqlite3`). Any existing `db.json` is automatically migrated during install or upgrade.
+- **Storage**: SQLite only, via Node's built-in `node:sqlite` (`DatabaseSync`, Node ≥ 22.5). Any existing `db.json` is automatically migrated during install or upgrade.
 - **Communication**: REST API, WebSockets, MCP

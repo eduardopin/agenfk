@@ -26,9 +26,9 @@ decision before the owning task can proceed.
 | C8 | plan §1.3 | Two commit conventions; `CHANGELOG.md` is stale | resolved | T02 |
 | C9 | plan §1.3 | Spec wants design/visual evidence; repo has no browser e2e | deferred | T26 |
 | C10 | plan §1.3 | `AGENFK_COMPARISON.md` says AgEnFK "does not address session lifecycle" | deferred | Phase B (ADR-0003) |
-| C11 | T01 #1 | Branches cannot be registered on leaf items | **open** | T07 |
+| C11 | T01 #1 | Branches cannot be registered on leaf items | decided, deferred | T07 |
 | C12 | T01 #2 | No CLI path binds a project to a filesystem directory | deferred | T03 |
-| C13 | T01 #3 | `agenfk tokens --item` returns `[]`; plan §3's measurement model depends on it | **open** | T29 |
+| C13 | T01 #3 | `agenfk tokens --item` returns `[]`; plan §3's measurement model depends on it | decided, diagnosis pulled forward | T03 diagnosis, T29 fix |
 | C14 | T02 | Card says `GET /capabilities`; spec §23.1 and T03 use `/v1/…`; repo uses bare paths | resolved | T02 (ADR-0001 D6) |
 | C15 | T02 | `core` is dependency-free and environment-agnostic; the flag module must read config | resolved | T02 (ADR-0001 D2/D5) |
 | C16 | T02 | No `express.Router()`, no error/404 middleware, `app` is a singleton, `getCurrentVersion` unexported | resolved | T02 (ADR-0001 D3/D4) |
@@ -142,7 +142,7 @@ false.
 capability actually ships (Phase B) — until then the statement is true of the released
 product, and correcting it early would be the inaccuracy.
 
-### C11 — Branches cannot be registered on leaf items **(open)**
+### C11 — Branches cannot be registered on leaf items
 
 `agenfk branch create <task-id>` fails with *"Branches are tracked on top-level items
 only."* The only top-level item in this plan is the epic, and 33 tasks cannot share one
@@ -153,10 +153,13 @@ does not fire for task items.
 **Workaround in force.** Task branches are created with plain `git` and recorded in
 `docs/plans/items.md` plus an item comment. T01 and T02 both did this.
 
-**Needs an owner decision.** (A) allow `branchName` on leaf items, or (B) let
-`WorktreeBinding` (D4/T07) own the item↔branch link. T01 recommended (B) because the
-master spec already points there. This changes a public contract, so spec §0 requires
-the decision before the change.
+**Decided 2026-09-03 (owner): (B) — `WorktreeBinding` (D4/T07) owns the item↔branch
+link.** `branchName` is not relaxed to leaf items, so no public contract changes now and
+T07 does not inherit two overlapping representations. The binding entity has to map an
+item to a branch *and* a working directory anyway, which is strictly more than
+`branchName` can express. Accepted cost: until T07 lands, task branches are created with
+plain `git`, recorded in `docs/plans/items.md`, and the gatekeeper's branch auto-checkout
+does not fire for task items.
 
 ### C12 — No CLI path binds a project to a directory
 
@@ -167,16 +170,20 @@ binding lives only in the gitignored `.agenfk/project.json`.
 
 **Resolution.** Deferred to T03: `agenfk project doctor` is the natural home.
 
-### C13 — Token attribution returns nothing **(open)**
+### C13 — Token attribution returns nothing
 
 `agenfk tokens --item <id>` returned `[]` for the whole of T01, though `SDLC.md` §0
 rule 4 states token usage is captured automatically by the server-side ingestion
 worker. Plan §3's entire measurement model — and decision D11's recalibration —
 assume `agenfk tokens list --item <id>` works.
 
-**Needs an owner decision** on priority: either ingestion is triggered differently than
-the plan assumes, or attribution is not wired for this project. Until it is resolved,
-every task's token figure is a harness-counter proxy, not a measurement. Owned by T29.
+**Decided 2026-09-03 (owner): diagnose before T03 starts.** A bounded investigation
+into why the ingestion worker attributes no events to this project — it may be a small
+wiring gap rather than missing functionality. The reason for pulling it forward is D11:
+the envelope recalibration wants T02's and T03's real numbers, and T03 is the last point
+at which T03's own data can still be captured. If the diagnosis shows the fix is large it
+stays in T29, and plan §3 is amended to say plainly that its figures are harness-counter
+proxies rather than measurements. Until then, every token figure in this plan is a proxy.
 
 ### C14 — `/capabilities` vs. `/v1/…` vs. the repository's bare paths
 
