@@ -35,6 +35,7 @@ import { exec, execSync, execFileSync, spawn } from "child_process";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { createCapabilitiesRouter, readFeatureConfig } from "./routes/capabilities.js";
+import { findProjectRoot, resolveProjectRoot, isRepoToplevel } from "./project-root.js";
 
 // The local API server is for this machine only. It binds to loopback by
 // default (override with AGENFK_HOST) and only accepts browser requests from
@@ -530,17 +531,6 @@ const syncParentStatus = async (parentId: string) => {
       await syncParentStatus(parent.parentId);
     }
   }
-};
-
-const findProjectRoot = (startDir: string): string => {
-  let currentDir = startDir;
-  while (currentDir !== path.parse(currentDir).root) {
-    if (fs.existsSync(path.join(currentDir, ".agenfk"))) {
-      return currentDir;
-    }
-    currentDir = path.dirname(currentDir);
-  }
-  return startDir;
 };
 
 const autoGitCommit = async (item: AgEnFKItem, projectRoot: string): Promise<{ success: boolean; output: string; error?: string }> => {
@@ -2836,12 +2826,32 @@ app.post("/items/:id/validate", asyncHandler(async (req: any, res: any) => {
   }
   const cwd: string | undefined = typeof req.body.cwd === 'string' && req.body.cwd ? req.body.cwd : undefined;
   if (cwd) {
-    // Resolve the caller's cwd UP to the project root (nearest `.agenfk` ancestor)
-    // so the verifyCommand always runs at the repo root — even when `agenfk verify`
-    // was invoked from a subdirectory — and never in the daemon's own dir (CGLAB-13).
-    const resolvedRoot = findProjectRoot(cwd);
+    // Resolve the caller's cwd UP to the project root (nearest `.agenfk` marker
+    // at or below the caller's git toplevel) so the verifyCommand always runs at
+    // the repo root — even when `agenfk verify` was invoked from a subdirectory
+    // — and never in the daemon's own dir (CGLAB-13), and never in the user's
+    // home directory (BUG 37660bd2).
+    const resolution = resolveProjectRoot(cwd);
     const item = await storage.getItem(req.params.id);
-    if (item) await storage.updateProject(item.projectId, { projectRoot: resolvedRoot });
+    if (item) {
+      const project = await storage.getProject(item.projectId);
+      const previousRoot = (project as any)?.projectRoot as string | undefined;
+      // A repoint is a consequential, easily-missed event: the verifyCommand and
+      // the auto-commit both run at this path. Never change it silently.
+      if (previousRoot && previousRoot !== resolution.root) {
+        const timestamp = new Date().toISOString();
+        console.warn(`[${timestamp}] [PROJECT_ROOT] Repointing project ${item.projectId}: ${previousRoot} -> ${resolution.root} (source: ${resolution.source}, cwd: ${cwd})`);
+        await storage.updateItem(req.params.id, {
+          comments: [...(item.comments || []), {
+            id: uuidv4(),
+            author: 'ValidateTool',
+            content: `### Project root repointed\n\n\`${previousRoot}\` → \`${resolution.root}\`\n\n**Resolved from**: \`${cwd}\` (source: \`${resolution.source}\`)\n\nThe verify command and any auto-commit run at the new path.`,
+            timestamp: new Date(),
+          }],
+        });
+      }
+      await storage.updateProject(item.projectId, { projectRoot: resolution.root });
+    }
   }
   // One active run per item — a second verify while one runs is almost always
   // an agent misreading slowness as failure. Applies to sync requests too so

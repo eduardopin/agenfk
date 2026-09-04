@@ -18,6 +18,7 @@ import request from 'supertest';
 import * as fs from 'fs';
 import * as os from 'os';
 import * as path from 'path';
+import { execFileSync } from 'child_process';
 
 vi.mock('axios', () => {
   const mockAxios = vi.fn() as any;
@@ -122,6 +123,89 @@ describe('CGLAB-13 — verifyCommand runs in the project working directory', () 
     expect(done.body.output.trim()).toContain(projRoot);
     const proj = (await request(app).get(`/projects/${projectId}`)).body;
     expect(proj.projectRoot).toBe(projRoot);
+  });
+
+  // ── BUG 37660bd2 — the repository boundary ──────────────────────────────────
+
+  const git = (cwd: string, ...args: string[]) =>
+    execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'] });
+
+  it('a worktree resolves to the worktree root, not to a .agenfk marker above it', async () => {
+    if (!VERIFY_TOKEN) return;
+    // The shape of BUG 37660bd2: a git worktree carries no `.agenfk` (the
+    // directory is gitignored and never checked out), and there is a `.agenfk`
+    // in an ancestor — here a sibling project directory, in the wild the
+    // framework's own `~/.agenfk`. The unbounded walk used to hand back the
+    // ancestor, and the verifyCommand then ran there.
+    const outer = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agenfk-outer-')));
+    try {
+      fs.mkdirSync(path.join(outer, '.agenfk'));
+      const repo = path.join(outer, 'repo');
+      fs.mkdirSync(repo);
+      git(repo, 'init', '-q', '-b', 'main');
+      git(repo, 'config', 'user.email', 'test@example.com');
+      git(repo, 'config', 'user.name', 'Test');
+      fs.writeFileSync(path.join(repo, 'README.md'), '# fixture\n');
+      git(repo, 'add', '-A');
+      git(repo, 'commit', '-qm', 'initial');
+      const worktree = path.join(outer, 'wt');
+      git(repo, 'worktree', 'add', '-q', worktree, '-b', 'fixture');
+
+      const { projectId, item } = await itemOnFinalStep('CWD5', 'pwd');
+      const res = await request(app)
+        .post(`/items/${item.id}/validate`)
+        .set('x-agenfk-internal', VERIFY_TOKEN)
+        .send({ async: true, cwd: worktree });
+      const done = await waitForRun(res.body.runId);
+
+      const proj = (await request(app).get(`/projects/${projectId}`)).body;
+      expect(proj.projectRoot).toBe(fs.realpathSync(worktree));
+      expect(proj.projectRoot).not.toBe(outer);
+      // And the command actually ran there.
+      expect(done.body.output.trim()).toContain(fs.realpathSync(worktree));
+    } finally {
+      fs.rmSync(outer, { recursive: true, force: true });
+    }
+  });
+
+  it('records a visible comment when the resolved project root changes', async () => {
+    if (!VERIFY_TOKEN) return;
+    // Two items in the same project, validated from two different roots. The
+    // second validate repoints the project — silently, before this change.
+    const p = (await request(app).post('/projects').send({ name: 'CWD6' })).body;
+    await request(app).put(`/projects/${p.id}/verify-command`).set('x-agenfk-internal', VERIFY_TOKEN!).send({ verifyCommand: 'true' });
+
+    const mkItem = async (title: string) => {
+      const it0 = (await request(app).post('/items').send({ type: 'TASK', title, projectId: p.id })).body;
+      await request(app).post('/items/bulk').set('x-agenfk-internal', VERIFY_TOKEN!)
+        .send({ items: [{ id: it0.id, updates: { status: 'TEST' } }] });
+      return it0;
+    };
+
+    const first = await mkItem('CWD6-a');
+    const r1 = await request(app).post(`/items/${first.id}/validate`)
+      .set('x-agenfk-internal', VERIFY_TOKEN).send({ async: true, cwd: projRoot });
+    await waitForRun(r1.body.runId);
+
+    const otherRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'agenfk-other-')));
+    try {
+      fs.mkdirSync(path.join(otherRoot, '.agenfk'));
+      const second = await mkItem('CWD6-b');
+      const r2 = await request(app).post(`/items/${second.id}/validate`)
+        .set('x-agenfk-internal', VERIFY_TOKEN).send({ async: true, cwd: otherRoot });
+      await waitForRun(r2.body.runId);
+
+      const proj = (await request(app).get(`/projects/${p.id}`)).body;
+      expect(proj.projectRoot).toBe(otherRoot);
+
+      const reloaded = (await request(app).get(`/items/${second.id}`)).body;
+      const repointComment = (reloaded.comments || []).find((c: any) => c.content.includes('Project root repointed'));
+      expect(repointComment).toBeDefined();
+      expect(repointComment.content).toContain(projRoot);
+      expect(repointComment.content).toContain(otherRoot);
+    } finally {
+      fs.rmSync(otherRoot, { recursive: true, force: true });
+    }
   });
 
   it('fallback: a caller cwd with no .agenfk ancestor is used as-is (returns the raw cwd)', async () => {
