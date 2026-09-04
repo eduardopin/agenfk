@@ -35,6 +35,7 @@ decision before the owning task can proceed.
 | C17 | T02 | Plan §6.1 puts docs in `docs/autonomous-delivery/`; the T02 card says `docs/architecture/` + `docs/adr/` | resolved | T02 |
 | C18 | T02 | `packages/cli/src/test/cli.test.ts` is run by nothing | resolved | T02 |
 | C19 | T02 | Spec §5 names a companion spec as authoritative that does not exist | deferred | T04 (ADR-0003 D7) |
+| C20 | T02 | The 80% coverage gate does not pass at baseline — branches are at 74.63% | decided | TASK `47b3727a` |
 
 ---
 
@@ -248,3 +249,51 @@ repository nor on the build machine (plan §1.2).
 
 **Resolution.** ADR-0003 D7: T04 authors it before any D1–D5 code is written, so the
 companion spec is a contract rather than a post-hoc description of whatever was built.
+
+### C20 — The coverage gate does not pass at baseline
+
+Plan §1.4 records the coverage gate as "enforced by `vitest.config.ts`; every task must
+keep it", and plan §6.1 makes "coverage gate ≥ 80% … intact" a Definition-of-Done item for
+every task. Running it shows the gate has never passed:
+
+```
+Statements   : 83.89% ( 4924/5869 )
+Branches     : 74.63% ( 3196/4282 )   <-- below the 80% threshold
+Functions    : 86.23% (  714/828  )
+Lines        : 86.84% ( 4337/4994 )
+ERROR: Coverage for branches (74.63%) does not meet global threshold (80%)
+```
+
+`vitest.config.ts` sets all four thresholds to 80, so `npm run test:coverage` exits
+non-zero on an unmodified checkout. This is **pre-existing debt, not a regression**: T02's
+own files are at 100% statements, branches and functions
+(`packages/core/src/features.ts`, `packages/server/src/routes/capabilities.ts`), and 200
+new lines cannot move a 4,282-branch denominator by 5.4 points.
+
+Closing the gap means covering roughly 230 more branches across `core`,
+`storage-sqlite`, `server` and `hub`. It is not work any single task in this plan can
+absorb, and CI does not run coverage — `ci.yml` runs `npm ci → build → test`, so nothing
+enforces it today.
+
+**Decided 2026-09-04: (a) treat 74.63% as a floor, and fund the gap as its own item —
+TASK `47b3727a`.**
+
+Option (c), lowering the branch threshold in `vitest.config.ts` to the current figure, was
+explicitly rejected. It is the tidiest-looking fix and the least safe one: it converts real
+debt into an invisible standard, and it is the exact move the delivery flow's own exit
+criteria forbid — *"never mask a failing test with a threshold, a skip, or a loosened
+assertion."* A gate that is green because the bar was moved to meet the code is not a gate.
+It is also outside T02's touch list, so it would have required a plan amendment regardless.
+
+Consequences for every task until `47b3727a` lands:
+
+- Report **per-file** coverage for the code the task adds, held to ≥ 80%. This is the
+  number plan §6.1 actually cares about ("new code ≥ 80%").
+- Report the global figure as **unchanged**, never as green, and never lower it.
+- `npm run test:coverage` continues to exit non-zero on an unmodified checkout. That is
+  the honest state of the repository, and it is now visible on the board rather than
+  buried in a DoD checkbox nobody could satisfy.
+
+Note that CI does not run coverage today (`ci.yml` is `npm ci → build → test`), so nothing
+enforces the gate either way. Wiring coverage into CI belongs with `47b3727a`, not before
+it — doing it first would turn every merge red.

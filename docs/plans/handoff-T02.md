@@ -87,6 +87,33 @@ default to `false`, so a default installation behaves exactly as 1.1.16 did.
    from suite runs. They are gitignored (`*.sqlite*`) so they cannot be committed by
    accident, but they are never cleaned up. Cosmetic, recorded so nobody rediscovers it.
 
+6. **A task worktree cannot run AgEnFK commands.** `.agenfk/` is gitignored, so
+   `git worktree add` produces a checkout with no `project.json` and
+   `agenfk current-project` fails there. Plan §2.3 mandates a worktree per task from T02
+   onward, so this hits every remaining task. Workaround: create
+   `.agenfk/project.json` in the worktree by hand (it stays gitignored).
+7. **`findProjectRoot` escapes to `$HOME` from a worktree — filed as BUG
+   `37660bd2-a249-4e0e-977c-ace47df65fc3`.** Because the worktree has no `.agenfk`, the
+   upward walk at `packages/server/src/server.ts:535` reaches `/home/pin`, where the
+   framework's own `~/.agenfk` config directory lives, and persists that as
+   `project.projectRoot`. The server then runs `verifyCommand` there
+   (`server.ts:2664`) and, on DONE, `git add -A && git commit` there
+   (`server.ts:2551`). `/home/pin` is not a git repository on this machine so the commit
+   half would have failed harmlessly, but on a dotfiles-repo home it would commit the
+   entire home directory. Same hazard class as C5, made reachable by C12. Not fixed —
+   `packages/server` is outside T02's touch list.
+8. **The AgEnFK API server died mid-session** during the test runs, leaving a stale
+   `~/.agenfk/server-port`. Restarting it via `agenfk up`/`agenfk restart` is not a
+   neutral act: both run `scripts/install.mjs` unconditionally, which rewrites MCP config,
+   rule bundles and PreToolUse hooks into every AI client directory on the machine.
+   `node scripts/start-services.mjs` starts the services without the installer and is the
+   right tool for a plain restart.
+9. **Restarting can silently produce two HTTP servers on one database.** A server had
+   already been revived by something else on port 3001; starting another bound 3002 and
+   both had the same `AGENFK_DB_PATH` open, breaking the single-writer guarantee until the
+   duplicate was killed. Note that killing it also *removed* `~/.agenfk/server-port`, so
+   the surviving server became undiscoverable until the file was restored by hand.
+
 ## Open questions for the owner
 
 | # | Question | Blocks |
