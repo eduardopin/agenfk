@@ -8,7 +8,7 @@
  * faking git, because the refusal is git's own behaviour and a mock would just
  * encode the assumption under test.
  */
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "vitest";
 import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
@@ -17,6 +17,8 @@ import {
   resolveBranchCheckout,
   renderBranchCheckout,
   parseWorktreeBranches,
+  setGitRunnerImpl,
+  resetGitRunnerImpl,
 } from "../branch-checkout";
 
 const git = (cwd: string, ...args: string[]) =>
@@ -291,6 +293,103 @@ describe("parseWorktreeBranches — prunable and spaced paths", () => {
   it("handles CRLF and a missing trailing blank line", () => {
     const porcelain = "worktree /home/u/repo\r\nHEAD abc\r\nbranch refs/heads/main";
     expect(parseWorktreeBranches(porcelain).get("main")?.path).toBe("/home/u/repo");
+  });
+});
+
+describe("resolveBranchCheckout — an older git without `switch`", () => {
+  afterEach(() => resetGitRunnerImpl());
+
+  it("falls back to `git checkout` when `switch` is not a git command", () => {
+    // git < 2.23. The leading-dash guard has already made `checkout` safe by the
+    // time this path is reached, which is the only reason the fallback exists.
+    const calls: string[][] = [];
+    setGitRunnerImpl((_cwd, args) => {
+      calls.push(args);
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { out: "main" };
+      if (args[0] === "rev-parse") return { out: "abc123" };
+      if (args[0] === "worktree") return { out: "" };
+      if (args[0] === "status") return { out: "" };
+      if (args[0] === "switch") return { error: "git: 'switch' is not a git command. See 'git --help'." };
+      if (args[0] === "checkout") return { out: "Switched to branch 'target'" };
+      return { out: "" };
+    });
+    expect(resolveBranchCheckout("target", { cwd: "/anywhere" })).toEqual({
+      kind: "checked-out",
+      branch: "target",
+    });
+    expect(calls.some((a) => a[0] === "switch")).toBe(true);
+    expect(calls.some((a) => a[0] === "checkout")).toBe(true);
+  });
+
+  it("reports a real `switch` failure instead of retrying with checkout", () => {
+    // A failure that is not "switch does not exist" must not be papered over by
+    // a second attempt through a different command.
+    const calls: string[][] = [];
+    setGitRunnerImpl((_cwd, args) => {
+      calls.push(args);
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { out: "main" };
+      if (args[0] === "rev-parse") return { out: "abc123" };
+      if (args[0] === "worktree") return { out: "" };
+      if (args[0] === "status") return { out: "" };
+      if (args[0] === "switch") return { error: "fatal: invalid reference: target" };
+      return { out: "" };
+    });
+    expect(resolveBranchCheckout("target", { cwd: "/anywhere" })).toEqual({
+      kind: "checkout-failed",
+      branch: "target",
+      error: "fatal: invalid reference: target",
+    });
+    expect(calls.some((a) => a[0] === "checkout")).toBe(false);
+  });
+
+  it("reports a checkout failure from the fallback path", () => {
+    setGitRunnerImpl((_cwd, args) => {
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { out: "main" };
+      if (args[0] === "rev-parse") return { out: "abc123" };
+      if (args[0] === "worktree") return { out: "" };
+      if (args[0] === "status") return { out: "" };
+      if (args[0] === "switch") return { error: "git: 'switch' is not a git command" };
+      return { error: "error: Your local changes would be overwritten" };
+    });
+    const outcome = resolveBranchCheckout("target", { cwd: "/anywhere" });
+    expect(outcome.kind).toBe("checkout-failed");
+    if (outcome.kind === "checkout-failed") expect(outcome.error).toContain("local changes");
+  });
+
+  it("reports a working tree it cannot read", () => {
+    setGitRunnerImpl((_cwd, args) => {
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { out: "main" };
+      if (args[0] === "rev-parse") return { out: "abc123" };
+      if (args[0] === "worktree") return { out: "" };
+      if (args[0] === "status") return { error: "fatal: this operation must be run in a work tree" };
+      return { out: "" };
+    });
+    const outcome = resolveBranchCheckout("target", { cwd: "/anywhere" });
+    expect(outcome.kind).toBe("checkout-failed");
+    if (outcome.kind === "checkout-failed") expect(outcome.error).toContain("work tree");
+  });
+});
+
+describe("renderBranchCheckout — every outcome has a message", () => {
+  it("renders each kind, and none of them lies", () => {
+    const cases: Array<[any, string]> = [
+      [{ kind: "already-on", branch: "b" }, "Already on branch"],
+      [{ kind: "checked-out", branch: "b" }, "Switched to branch"],
+      [{ kind: "would-check-out", branch: "b" }, "is free"],
+      [{ kind: "refused-dirty", branch: "b" }, "uncommitted changes"],
+      [{ kind: "invalid-name", branch: "-f" }, "not a valid branch name"],
+      [{ kind: "unborn", branch: "b" }, "no commits yet"],
+      [{ kind: "not-a-repo", branch: "b" }, "Not a git repository"],
+    ];
+    for (const [outcome, expected] of cases) {
+      const text = renderBranchCheckout(outcome);
+      expect(text).toContain(expected);
+      expect(text).toContain(outcome.branch);
+    }
+    // Only the outcome that actually switched may say so.
+    for (const [outcome] of cases.filter(([o]) => o.kind !== "checked-out")) {
+      expect(renderBranchCheckout(outcome)).not.toContain("Switched to branch");
+    }
   });
 });
 

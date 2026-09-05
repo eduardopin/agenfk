@@ -72,7 +72,26 @@ interface GitResult {
   error?: string;
 }
 
+/**
+ * Test seam, following `setReleasesUpdateExecImpl` and `setAutoGitCommitExecImpl`.
+ *
+ * It exists for one path that cannot be reached otherwise: the `git checkout`
+ * fallback taken when `git switch` is unavailable, i.e. on git older than 2.23.
+ * That is the path real users on an older git will run, so leaving it untested
+ * because the test machine has a new git would be testing the machine rather
+ * than the code.
+ */
+export type GitRunner = (cwd: string, args: string[]) => GitResult;
+let gitRunnerImpl: GitRunner | null = null;
+export const setGitRunnerImpl = (impl: GitRunner): void => {
+  gitRunnerImpl = impl;
+};
+export const resetGitRunnerImpl = (): void => {
+  gitRunnerImpl = null;
+};
+
 function git(cwd: string, ...args: string[]): GitResult {
+  if (gitRunnerImpl) return gitRunnerImpl(cwd, args);
   try {
     const out = execFileSync("git", args, {
       cwd,
