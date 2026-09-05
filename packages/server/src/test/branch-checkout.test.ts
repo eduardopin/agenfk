@@ -70,6 +70,7 @@ describe("resolveBranchCheckout", () => {
       kind: "in-other-worktree",
       branch: "busy-branch",
       path: worktree,
+      prunable: false,
     });
     // And the repository was left exactly as it was.
     expect(git(repo, "rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("main");
@@ -80,6 +81,7 @@ describe("resolveBranchCheckout", () => {
       kind: "in-other-worktree",
       branch: "main",
       path: repo,
+      prunable: false,
     });
     expect(resolveBranchCheckout("busy-branch", { cwd: worktree })).toEqual({
       kind: "already-on",
@@ -96,7 +98,9 @@ describe("resolveBranchCheckout", () => {
 
   it("reports what would happen without acting when performCheckout is false", () => {
     const outcome = resolveBranchCheckout("free-branch", { cwd: repo, performCheckout: false });
-    expect(outcome).toEqual({ kind: "checked-out", branch: "free-branch" });
+    // A distinct kind: reporting "checked-out" for something it did not check
+    // out would have the renderer print "Switched to branch" untruthfully.
+    expect(outcome).toEqual({ kind: "would-check-out", branch: "free-branch" });
     expect(git(repo, "rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("main");
   });
 
@@ -138,12 +142,155 @@ describe("resolveBranchCheckout", () => {
     // Uncommitted change that switching would clobber.
     fs.writeFileSync(path.join(other, "f.txt"), "dirty\n");
 
-    const outcome = resolveBranchCheckout("divergent", { cwd: other });
-    expect(outcome.kind).toBe("checkout-failed");
-    if (outcome.kind === "checkout-failed") {
-      expect(outcome.error).toBeTruthy();
-      expect(outcome.error).not.toContain("does not exist");
-    }
+    // The tree is dirty, so the refusal now comes from this module rather than
+    // from git — which is the point: nothing is attempted near uncommitted work.
+    expect(resolveBranchCheckout("divergent", { cwd: other })).toEqual({
+      kind: "refused-dirty",
+      branch: "divergent",
+    });
+  });
+});
+
+describe("resolveBranchCheckout — the dash that ate the working tree", () => {
+  it("refuses a branch name starting with a dash, before git ever sees it", () => {
+    // `git branch` rejects such a name, but `git update-ref` creates it and
+    // `PUT /items/:id` stores `branchName` with no format check. Passed as the
+    // first positional argument, `-f` is the OPTION -f: `git checkout -f`
+    // discards the working tree, reports success, and never moves HEAD.
+    const dash = path.join(tmp, "dashrepo");
+    fs.mkdirSync(dash);
+    git(dash, "init", "-q", "-b", "main");
+    git(dash, "config", "user.email", "test@example.com");
+    git(dash, "config", "user.name", "Test");
+    fs.writeFileSync(path.join(dash, "f.txt"), "committed\n");
+    git(dash, "add", "-A");
+    git(dash, "commit", "-qm", "initial");
+    git(dash, "update-ref", "refs/heads/-f", "HEAD");
+    fs.writeFileSync(path.join(dash, "f.txt"), "PRECIOUS UNCOMMITTED WORK\n");
+
+    expect(resolveBranchCheckout("-f", { cwd: dash })).toEqual({
+      kind: "invalid-name",
+      branch: "-f",
+    });
+    // The whole point: the uncommitted work is still there.
+    expect(fs.readFileSync(path.join(dash, "f.txt"), "utf8")).toContain("PRECIOUS");
+  });
+
+  it("refuses `--pathspec-from-file=...` the same way", () => {
+    expect(resolveBranchCheckout("--pathspec-from-file=/etc/passwd", { cwd: repo }).kind).toBe(
+      "invalid-name",
+    );
+  });
+});
+
+describe("resolveBranchCheckout — refuses to act near uncommitted work", () => {
+  it("does not switch branches when the tree is dirty", () => {
+    const dirty = path.join(tmp, "dirtyrepo");
+    fs.mkdirSync(dirty);
+    git(dirty, "init", "-q", "-b", "main");
+    git(dirty, "config", "user.email", "test@example.com");
+    git(dirty, "config", "user.name", "Test");
+    fs.writeFileSync(path.join(dirty, "f.txt"), "one\n");
+    git(dirty, "add", "-A");
+    git(dirty, "commit", "-qm", "one");
+    git(dirty, "branch", "target");
+    fs.writeFileSync(path.join(dirty, "f.txt"), "work in progress\n");
+
+    expect(resolveBranchCheckout("target", { cwd: dirty })).toEqual({
+      kind: "refused-dirty",
+      branch: "target",
+    });
+    expect(git(dirty, "rev-parse", "--abbrev-ref", "HEAD").trim()).toBe("main");
+    expect(fs.readFileSync(path.join(dirty, "f.txt"), "utf8")).toContain("work in progress");
+  });
+
+  it("counts an untracked file as dirty too", () => {
+    const dirty2 = path.join(tmp, "dirtyrepo2");
+    fs.mkdirSync(dirty2);
+    git(dirty2, "init", "-q", "-b", "main");
+    git(dirty2, "config", "user.email", "test@example.com");
+    git(dirty2, "config", "user.name", "Test");
+    fs.writeFileSync(path.join(dirty2, "f.txt"), "one\n");
+    git(dirty2, "add", "-A");
+    git(dirty2, "commit", "-qm", "one");
+    git(dirty2, "branch", "target");
+    fs.writeFileSync(path.join(dirty2, "untracked.txt"), "new\n");
+
+    expect(resolveBranchCheckout("target", { cwd: dirty2 }).kind).toBe("refused-dirty");
+  });
+});
+
+describe("resolveBranchCheckout — repository states", () => {
+  it("distinguishes a repository with no commits from a non-repository", () => {
+    const unborn = path.join(tmp, "unborn");
+    fs.mkdirSync(unborn);
+    git(unborn, "init", "-q", "-b", "main");
+    expect(resolveBranchCheckout("main", { cwd: unborn })).toEqual({
+      kind: "unborn",
+      branch: "main",
+    });
+  });
+
+  it("does not mistake a detached HEAD for being on a branch called HEAD", () => {
+    const det = path.join(tmp, "detached");
+    fs.mkdirSync(det);
+    git(det, "init", "-q", "-b", "main");
+    git(det, "config", "user.email", "test@example.com");
+    git(det, "config", "user.name", "Test");
+    fs.writeFileSync(path.join(det, "f.txt"), "one\n");
+    git(det, "add", "-A");
+    git(det, "commit", "-qm", "one");
+    git(det, "checkout", "-q", "--detach");
+    // `git rev-parse --abbrev-ref HEAD` returns the literal "HEAD" here.
+    expect(resolveBranchCheckout("HEAD", { cwd: det }).kind).not.toBe("already-on");
+  });
+
+  it("points at the remote when the branch exists only there", () => {
+    const origin = path.join(tmp, "origin.git");
+    git(tmp, "init", "-q", "--bare", origin);
+    const clone = path.join(tmp, "clone");
+    git(repo, "push", "-q", origin, "main:main");
+    git(tmp, "clone", "-q", origin, clone);
+    git(repo, "push", "-q", origin, "free-branch:remote-only");
+    git(clone, "fetch", "-q", "origin");
+
+    const outcome = resolveBranchCheckout("remote-only", { cwd: clone });
+    expect(outcome.kind).toBe("missing");
+    if (outcome.kind === "missing") expect(outcome.remote).toBe("origin/remote-only");
+    expect(renderBranchCheckout(outcome)).toContain("git checkout -b remote-only origin/remote-only");
+  });
+});
+
+describe("parseWorktreeBranches — prunable and spaced paths", () => {
+  it("marks a worktree whose directory is gone as prunable", () => {
+    const porcelain = [
+      "worktree /home/u/repo",
+      "HEAD abc123",
+      "branch refs/heads/main",
+      "",
+      "worktree /home/u/wt/gone",
+      "HEAD def456",
+      "branch refs/heads/orphaned",
+      "prunable gitdir file points to non-existent location",
+      "",
+    ].join("\n");
+    const map = parseWorktreeBranches(porcelain);
+    expect(map.get("orphaned")).toEqual({ path: "/home/u/wt/gone", prunable: true });
+    expect(map.get("main")?.prunable).toBe(false);
+    // And the agent is told to prune rather than sent to a directory that is gone.
+    expect(
+      renderBranchCheckout({ kind: "in-other-worktree", branch: "orphaned", path: "/home/u/wt/gone", prunable: true }),
+    ).toContain("git worktree prune");
+  });
+
+  it("keeps a path containing spaces intact", () => {
+    const porcelain = ["worktree /home/u/my space/wt", "HEAD abc", "branch refs/heads/spaced", ""].join("\n");
+    expect(parseWorktreeBranches(porcelain).get("spaced")?.path).toBe("/home/u/my space/wt");
+  });
+
+  it("handles CRLF and a missing trailing blank line", () => {
+    const porcelain = "worktree /home/u/repo\r\nHEAD abc\r\nbranch refs/heads/main";
+    expect(parseWorktreeBranches(porcelain).get("main")?.path).toBe("/home/u/repo");
   });
 });
 
@@ -160,8 +307,9 @@ describe("parseWorktreeBranches", () => {
       "",
     ].join("\n");
     const map = parseWorktreeBranches(porcelain);
-    expect(map.get("main")).toBe("/home/u/repo");
-    expect(map.get("feature/x")).toBe("/home/u/wt/t01");
+    expect(map.get("main")?.path).toBe("/home/u/repo");
+    expect(map.get("feature/x")?.path).toBe("/home/u/wt/t01");
+    expect(map.get("main")?.prunable).toBe(false);
     expect(map.size).toBe(2);
   });
 
@@ -178,7 +326,7 @@ describe("parseWorktreeBranches", () => {
     ].join("\n");
     const map = parseWorktreeBranches(porcelain);
     expect(map.size).toBe(1);
-    expect(map.get("main")).toBe("/home/u/repo");
+    expect(map.get("main")?.path).toBe("/home/u/repo");
   });
 
   it("returns nothing for empty output", () => {

@@ -59,7 +59,19 @@ Any item may carry a `branchName`, leaf tasks included. Branches were once track
 
 ### Gatekeeper Branch Checkout
 
-If the item has a `branchName` that exists locally, the **workflow gatekeeper** will auto-checkout the branch before the agent's first edit. If the branch does not exist locally, the gatekeeper warns the agent to create and check out the branch manually.
+If the item has a `branchName`, the **workflow gatekeeper** reports its state before the agent's first edit, and switches to it when — and only when — that is safe:
+
+| State | What happens |
+|---|---|
+| Already on the branch | Nothing. |
+| Branch is free and the working tree is clean | The gatekeeper checks it out. |
+| Branch is free but the tree has uncommitted changes | **Refused.** Commit or stash first; the server will not switch branches under work in progress. |
+| Branch is checked out in another worktree | Reported, with that worktree's path. Never taken away from it. |
+| That worktree's directory is gone | Reported as prunable, with `git worktree prune`. |
+| Branch exists only on the remote | Reported, with the `git checkout -b <b> origin/<b>` to run. |
+| No such branch | Reported; work on the current branch or ask for it to be created. |
+
+The gatekeeper never checks out a branch whose name starts with a dash: `git branch` rejects such names, but they can be written directly into an item, and git would read them as options.
 
 ---
 

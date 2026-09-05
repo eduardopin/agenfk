@@ -127,6 +127,29 @@ describe('KanbanBoard', () => {
     expect(await screen.findByText('Task 1')).toBeDefined();
   });
 
+  it('shows the branch chip on a child item (C11)', async () => {
+    // The card used to gate the branch and PR chips on `!item.parentId`, so a
+    // task's branch was stored and invisible. Nothing covered that gate before
+    // or after; this covers it now.
+    const project = { id: 'p1', name: 'P1', createdAt: new Date(), updatedAt: new Date() };
+    const items = [
+      { id: 'parent1', projectId: 'p1', type: ItemType.STORY, title: 'Parent story', status: Status.TODO, createdAt: new Date(), updatedAt: new Date() },
+      { id: 'child1', projectId: 'p1', parentId: 'parent1', type: ItemType.TASK, title: 'Child task', status: Status.TODO, branchName: 'feature/child-branch', createdAt: new Date(), updatedAt: new Date() },
+    ];
+
+    vi.mocked(api.listProjects).mockResolvedValue([project]);
+    vi.mocked(api.listItems).mockResolvedValue(items);
+    localStorage.setItem('agenfk_project_id', 'p1');
+
+    render(<KanbanBoard />, { wrapper });
+    // Children live in the drill-down view, reached from the parent's child-count
+    // button — the same KanbanCard renders there.
+    const drill = await screen.findByLabelText(/Show 1 child items/i);
+    fireEvent.click(drill);
+    await screen.findByText('Child task');
+    expect(await screen.findByText('feature/child-branch')).toBeDefined();
+  });
+
   it('should allow creating a new project', async () => {
     vi.mocked(api.listProjects).mockResolvedValue([]);
     

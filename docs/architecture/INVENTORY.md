@@ -287,7 +287,7 @@ false` because tests share filesystem state (`vitest.config.ts`). Timeouts are r
 | D1 first-class `Execution` attached to an Item | **missing** | `AgentRun` — transcript only, no lifecycle or ownership |
 | D2 typed `Checkpoint` + automatic checkpoints at boundaries | **missing** | `PauseSnapshot` — free-text, manual, one per item |
 | D3 one write lease per Item | **missing** | `activeValidateRunByItem` — in-memory, one endpoint |
-| D4 worktree binding + non-destructive drift detection | **missing** | `branchName` string on top-level items |
+| D4 worktree binding + non-destructive drift detection | **missing** | `branchName` string on any item (C11); the gatekeeper reads worktree state but binds nothing |
 | D5 portable resume packet + `agenfk execution resume` | **missing** | `resume-work <id>` |
 
 **0 of 5 present.** Spec §5's gate therefore fails at baseline, and no writable

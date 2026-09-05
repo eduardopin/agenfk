@@ -18,7 +18,7 @@ found all five missing, with partial analogues already in the codebase:
 | D1 first-class `Execution` attached to an Item | missing | `AgentRun` (`packages/core/src/types.ts:72-86`) — a transcript record with `status`/`verdict` but no lifecycle, ownership or lease |
 | D2 typed `Checkpoint` (git, progress, decision, verification, resume state) | missing | `PauseSnapshot` (`packages/core/src/types.ts:275-287`) — free-text `summary`/`resumeInstructions`, one row per item, consumed on resume |
 | D3 one write lease per Item | missing | `activeValidateRunByItem` — an **in-memory** `Map` in `server.ts`, scoped to one endpoint and lost on restart |
-| D4 worktree binding + non-destructive drift detection | missing | `branchName?: string` on `BaseItem` (`packages/core/src/types.ts:202`), and only on top-level items in practice (C11) |
+| D4 worktree binding + non-destructive drift detection | missing | `branchName?: string` on `BaseItem` (`packages/core/src/types.ts:202`), usable on any item since C11 was resolved; still a name, not a binding to a working directory |
 | D5 portable resume packet + `agenfk execution resume` | missing | `resume-work <id>` (`packages/cli/src/index.ts:1634`) — pops the snapshot and restores status |
 
 Spec §5 also names `AGENFK_DURABLE_EXECUTION_MASTER_SPEC_2.md` as "the detailed

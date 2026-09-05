@@ -26,15 +26,33 @@ export type BranchCheckoutOutcome =
   | { kind: "already-on"; branch: string }
   /** The branch was checked out into the current worktree just now. */
   | { kind: "checked-out"; branch: string }
+  /** The branch could be checked out, but the caller asked not to act. */
+  | { kind: "would-check-out"; branch: string }
   /**
    * The branch is checked out in a different worktree. Git would refuse, and
    * the caller has no business dragging it away from wherever it is being used.
+   * `prunable` means that worktree's directory is gone and the record is stale.
    */
-  | { kind: "in-other-worktree"; branch: string; path: string }
-  /** No local branch by that name. */
-  | { kind: "missing"; branch: string }
-  /** A checkout was attempted and git refused — a dirty tree, most likely. */
+  | { kind: "in-other-worktree"; branch: string; path: string; prunable?: boolean }
+  /** No local branch by that name. `remote` names a remote-tracking one if found. */
+  | { kind: "missing"; branch: string; remote?: string }
+  /**
+   * The branch is free, but the working tree has uncommitted changes. Switching
+   * branches under an agent that is mid-edit is how work gets lost, so this
+   * refuses rather than gambles.
+   */
+  | { kind: "refused-dirty"; branch: string }
+  /**
+   * Not a legal branch name. `git branch` rejects a leading dash, but
+   * `git update-ref` does not, and `branchName` is stored unvalidated — so a
+   * ref named `-f` would reach `git checkout` as the **option** `-f` and discard
+   * the working tree. Refused before any git command sees it.
+   */
+  | { kind: "invalid-name"; branch: string }
+  /** A checkout was attempted and git refused. Carries git's own words. */
   | { kind: "checkout-failed"; branch: string; error: string }
+  /** A repository with no commits yet: HEAD points at an unborn branch. */
+  | { kind: "unborn"; branch: string }
   /** Not a git repository at all, or `git` is unavailable. */
   | { kind: "not-a-repo"; branch: string };
 
@@ -80,20 +98,38 @@ function git(cwd: string, ...args: string[]): GitResult {
  * `branch refs/heads/<name>`. A detached worktree has no `branch` line and
  * simply does not appear in the map.
  */
-export function parseWorktreeBranches(porcelain: string): Map<string, string> {
-  const byBranch = new Map<string, string>();
+export interface WorktreeEntry {
+  path: string;
+  /** The worktree's directory is gone; git still holds the record. */
+  prunable: boolean;
+}
+
+export function parseWorktreeBranches(porcelain: string): Map<string, WorktreeEntry> {
+  const byBranch = new Map<string, WorktreeEntry>();
   let currentPath: string | undefined;
-  for (const line of porcelain.split("\n")) {
+  let prunable = false;
+  let branch: string | undefined;
+  const flush = () => {
+    if (currentPath && branch) byBranch.set(branch, { path: currentPath, prunable });
+    currentPath = undefined;
+    branch = undefined;
+    prunable = false;
+  };
+  for (const raw of porcelain.split("\n")) {
+    const line = raw.replace(/\r$/, "");
     if (line.startsWith("worktree ")) {
+      flush();
       currentPath = line.slice("worktree ".length).trim();
     } else if (line.startsWith("branch ") && currentPath) {
       const ref = line.slice("branch ".length).trim();
-      const name = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
-      byBranch.set(name, currentPath);
+      branch = ref.startsWith("refs/heads/") ? ref.slice("refs/heads/".length) : ref;
+    } else if (line.startsWith("prunable")) {
+      prunable = true;
     } else if (line.trim() === "") {
-      currentPath = undefined;
+      flush();
     }
   }
+  flush();
   return byBranch;
 }
 
@@ -107,11 +143,28 @@ export function resolveBranchCheckout(
 ): BranchCheckoutOutcome {
   const cwd = opts.cwd ?? process.cwd();
 
+  // Before any git command sees it. `git branch` refuses a name starting with a
+  // dash, but `git update-ref refs/heads/-f HEAD` creates one happily, and
+  // `PUT /items/:id` stores `branchName` with no format check. Such a name is an
+  // *option* to `git checkout`, and `git checkout -f` discards the working tree
+  // and reports success — verified, and it is the reason this guard exists.
+  if (branch.startsWith("-")) {
+    return { kind: "invalid-name", branch };
+  }
+
   const current = git(cwd, "rev-parse", "--abbrev-ref", "HEAD");
   if (current.out === undefined) {
-    return { kind: "not-a-repo", branch };
+    // A repository with no commits fails here too. Distinguish it: telling
+    // someone their freshly-initialised project is not a repository is wrong.
+    const inside = git(cwd, "rev-parse", "--is-inside-work-tree");
+    return inside.out === "true"
+      ? { kind: "unborn", branch }
+      : { kind: "not-a-repo", branch };
   }
-  if (current.out === branch) {
+  // On a detached HEAD `--abbrev-ref HEAD` returns the literal string "HEAD",
+  // which must not be mistaken for being on a branch called HEAD.
+  const detached = current.out === "HEAD";
+  if (!detached && current.out === branch) {
     return { kind: "already-on", branch };
   }
 
@@ -120,31 +173,54 @@ export function resolveBranchCheckout(
   // it is a **path** — so it answered "Needed a single revision" for every
   // branch that has ever existed, the catch-all turned that into "Branch does
   // not exist locally", and the gatekeeper's auto-checkout has never once run.
-  // The fully-qualified ref is both unambiguous and injection-safe here: it is
-  // one argv element, and a name that is not a ref simply does not resolve.
   const exists = git(cwd, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`);
   if (exists.out === undefined || exists.out === "") {
-    return { kind: "missing", branch };
+    // It may exist on a remote, which is a different piece of advice.
+    const remote = git(cwd, "rev-parse", "--verify", "--quiet", `refs/remotes/origin/${branch}`);
+    return remote.out
+      ? { kind: "missing", branch, remote: `origin/${branch}` }
+      : { kind: "missing", branch };
   }
 
   // Ask before acting. Git would refuse the checkout anyway, but the point is
   // to say *why* rather than report the refusal as a missing branch.
   const worktrees = git(cwd, "worktree", "list", "--porcelain");
   if (worktrees.out) {
-    const path = parseWorktreeBranches(worktrees.out).get(branch);
+    const entry = parseWorktreeBranches(worktrees.out).get(branch);
     // A path equal to `cwd` would already have matched `already-on` above, so
     // anything found here is genuinely elsewhere.
-    if (path) {
-      return { kind: "in-other-worktree", branch, path };
+    if (entry) {
+      return { kind: "in-other-worktree", branch, path: entry.path, prunable: entry.prunable };
     }
   }
 
   if (opts.performCheckout === false) {
-    return { kind: "checked-out", branch };
+    return { kind: "would-check-out", branch };
   }
 
-  // Same reason: `git checkout -- <branch>` is a file checkout, not a branch
-  // switch. `--` is dropped and the name is passed as the single argument it is.
+  // Owner decision: act, but only on a clean tree. Switching branches under an
+  // agent that is mid-edit is how work gets lost, and refusing here makes that
+  // impossible by construction rather than by trusting the name validation
+  // above to be exhaustive.
+  const status = git(cwd, "status", "--porcelain");
+  if (status.out === undefined) {
+    return { kind: "checkout-failed", branch, error: status.error ?? "could not read the working tree" };
+  }
+  if (status.out !== "") {
+    return { kind: "refused-dirty", branch };
+  }
+
+  // `git switch --end-of-options` is the form that cannot mistake a branch name
+  // for an option; `git checkout` accepts no such terminator. `switch` needs
+  // git >= 2.23, so an older git falls back to `checkout`, which the leading-dash
+  // guard above has already made safe.
+  const switched = git(cwd, "switch", "--end-of-options", branch);
+  if (switched.out !== undefined) {
+    return { kind: "checked-out", branch };
+  }
+  if (!/is not a git command|unknown option|usage: git/i.test(switched.error ?? "")) {
+    return { kind: "checkout-failed", branch, error: switched.error ?? "git switch failed" };
+  }
   const checkout = git(cwd, "checkout", branch);
   if (checkout.out === undefined) {
     return { kind: "checkout-failed", branch, error: checkout.error ?? "git checkout failed" };
@@ -159,12 +235,24 @@ export function renderBranchCheckout(outcome: BranchCheckoutOutcome): string {
       return `\n🔀 Already on branch '${outcome.branch}'.`;
     case "checked-out":
       return `\n🔀 Switched to branch '${outcome.branch}'.`;
+    case "would-check-out":
+      return `\n🔀 Branch '${outcome.branch}' is free — check it out before editing.`;
     case "in-other-worktree":
-      return `\n🔀 Branch '${outcome.branch}' is checked out in another worktree (${outcome.path}). Work there, or create a worktree of your own — do not check it out here.`;
+      return outcome.prunable
+        ? `\n⚠️ Branch '${outcome.branch}' is held by a worktree whose directory is gone (${outcome.path}). Run \`git worktree prune\`, then check it out.`
+        : `\n🔀 Branch '${outcome.branch}' is checked out in another worktree (${outcome.path}). Work there, or create a worktree of your own — do not check it out here.`;
     case "missing":
-      return `\n⚠️ Branch '${outcome.branch}' does not exist locally. Work on the current branch or ask the user to create it.`;
+      return outcome.remote
+        ? `\n⚠️ Branch '${outcome.branch}' exists only on the remote. Run \`git checkout -b ${outcome.branch} ${outcome.remote}\`.`
+        : `\n⚠️ Branch '${outcome.branch}' does not exist locally. Work on the current branch or ask the user to create it.`;
+    case "refused-dirty":
+      return `\n⚠️ Branch '${outcome.branch}' was NOT checked out: the working tree has uncommitted changes. Commit or stash them, then switch — the server will not do it for you and risk your work.`;
+    case "invalid-name":
+      return `\n⚠️ '${outcome.branch}' is not a valid branch name (it starts with a dash) and was refused. Fix the item's branchName.`;
     case "checkout-failed":
       return `\n⚠️ Branch '${outcome.branch}' exists but could not be checked out: ${outcome.error}`;
+    case "unborn":
+      return `\n⚠️ This repository has no commits yet, so branch '${outcome.branch}' could not be checked.`;
     case "not-a-repo":
       return `\n⚠️ Not a git repository here, so branch '${outcome.branch}' could not be checked.`;
   }

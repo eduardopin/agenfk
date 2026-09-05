@@ -3517,8 +3517,17 @@ prCmd
     }
     try {
       const { data: item } = await axios.get(`${API_URL}/items/${itemId}`);
+      // Now that leaf items may carry a branch, `pr create` has to name it.
+      // Without `--head`, `gh` opens the PR for whatever branch the shell is on
+      // — which, with one worktree per task, is routinely not the item's. The
+      // PR URL and the pr.opened hub event would then be recorded against the
+      // task while pointing at somebody else's work.
+      if (!item.branchName) {
+        console.error(chalk.red(`❌ Item [${itemId.substring(0, 8)}] has no branch. Link one first: agenfk branch link ${itemId.substring(0, 8)} <branch>`));
+        process.exit(1);
+      }
       const prTitle = options.title || item.title;
-      const args = ['pr', 'create', '--title', prTitle];
+      const args = ['pr', 'create', '--title', prTitle, '--head', item.branchName];
       if (options.body) { args.push('--body', options.body); } else { args.push('--body', item.description || ''); }
       if (options.draft) args.push('--draft');
 
