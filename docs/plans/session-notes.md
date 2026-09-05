@@ -133,11 +133,44 @@ Sessão de preparação, não uma task do plano. Rodou em Claude Opus 5 (1M).
 | 3 | `findProjectRoot` cai no toplevel do git e loga o repoint | Alternativa recusada: erro explícito, que quebraria toda worktree até alguém criar `.agenfk/project.json` à mão — exatamente o workaround que se queria eliminar |
 | 4 | `autoGitCommit` passa a ser opt-in, **default desligado** | Mudança funcional visível para todos os usuários do AgEnFK. Registrada no CHANGELOG como BREAKING (behaviour) |
 
+## Revisão independente
+
+A exit criteria do passo REVIEW exige revisor independente. Dois rodaram sobre o diff, cada um
+verificando achados por execução contra fixtures git montadas para o caso, não por inferência.
+13 achados: 10 aceitos e corrigidos em `043f6f28`, 3 recusados com motivo no corpo do commit.
+
+Ambos chegaram ao mesmo blocker, que **esta branch criou** e não herdou:
+
+1. **A resposta de DONE afirmava `"The server has auto-committed the changes"` incondicionalmente.**
+   Com o default invertido isso virou mentira para todo projeto: um agente daria `git push` numa
+   branch com o trabalho ainda unstaged e reportaria o item entregue. A mensagem agora deriva do
+   resultado real e nomeia o motivo da recusa.
+2. **O guard de `$HOME` comparava caminhos não resolvidos.** `projectRoot` chega realpath'd,
+   `os.homedir()` não; com o home alcançado por symlink (`/home` → `/var/home`, bind mount, home
+   cifrado) as strings diferem, o guard passa — e um home dotfiles é um toplevel git de verdade,
+   então o guard seguinte passa também. `git add -A` no `$HOME`, através do guard escrito para
+   impedi-lo.
+
+Os demais: `$HOME` ainda retornado pelo ramo `git-toplevel`; submódulo resolvendo para o submódulo
+(regressão para checkout comum, não só worktree); uma **terceira** cópia da busca em `packages/cli`
+que a minha própria mensagem de commit dizia não existir; falhas de `git` indistinguíveis de "não é
+repositório"; a rota nova mascarando toda falha de storage como 404 no **desligador** de uma feature
+destrutiva; o comentário de repoint derrubando o request inteiro de validate; e o terceiro parâmetro
+opcional, que permitiria desligar o auto-commit em silêncio ao reverter um call site.
+
+Erro meu no caminho, pego pela suíte e não por mim: o `execSync` que adicionei no CLI poluía
+`ui-open.test.ts`, que conta invocações de shell. Trocado por `execFileSync` — a forma correta de
+qualquer modo.
+
 ## Próximos Passos
 
 1. Worktree `../agenfk-wt/t03` + `npm ci`, branch
    `feature/7f8f6821-33d4-492d-8574-dd6b83faff98_t03-…`.
 2. T03 conforme o card §5/T03, com `handoff-T02.md` §"What T03 must know" como entrada.
+3. **Instalar esta versão** (`npm run install:framework`) antes do T03 se quiser que a worktree
+   dispense o `.agenfk/project.json` à mão — o daemon em execução ainda é o anterior ao fix, e
+   demonstrou isso ao vivo ao fechar estes dois itens, imprimindo "The server has auto-committed
+   the changes" quando nada foi comitado.
 
 ## Riscos Ativos
 
