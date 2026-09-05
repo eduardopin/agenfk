@@ -35,6 +35,7 @@ import { exec, execSync, execFileSync, spawn } from "child_process";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { createCapabilitiesRouter, readFeatureConfig } from "./routes/capabilities.js";
+import { findProjectRoot, resolveProjectRoot, resolveRepoToplevelDetailed, safeRealpath } from "./project-root.js";
 
 // The local API server is for this machine only. It binds to loopback by
 // default (override with AGENFK_HOST) and only accepts browser requests from
@@ -532,31 +533,94 @@ const syncParentStatus = async (parentId: string) => {
   }
 };
 
-const findProjectRoot = (startDir: string): string => {
-  let currentDir = startDir;
-  while (currentDir !== path.parse(currentDir).root) {
-    if (fs.existsSync(path.join(currentDir, ".agenfk"))) {
-      return currentDir;
-    }
-    currentDir = path.dirname(currentDir);
-  }
-  return startDir;
+/**
+ * Auto-commit on DONE — opt in, and refused outside the repository root.
+ *
+ * This runs `git add -A`, which stages the *entire* working tree at
+ * `projectRoot`, not the files belonging to the item being closed. With more
+ * than one worktree active it sweeps unrelated work into a commit; combined
+ * with the unbounded `findProjectRoot` it could do so in the user's home
+ * directory. See contradiction C5 and BUG `2df0f02f-7533-4733-b935-3a73f749fa22`.
+ *
+ * Two things hold it back now. It is **off unless the project opts in**
+ * (`project.autoGitCommit`), and it refuses any `projectRoot` that is not
+ * itself the toplevel of a git repository or worktree — a subdirectory or the
+ * home directory is a resolution failure, not a place to commit. Every refusal
+ * is logged with its reason.
+ *
+ * Worktree-scoped, execution-aware auto-commit — one that knows which Execution
+ * and which WorktreeBinding it belongs to — remains T07/T25. This closes the
+ * hazard; it does not deliver that design.
+ */
+export type AutoGitCommitResult = { success: boolean; output: string; error?: string; skipped?: string };
+
+// Injected so the helper is reachable under vitest: the four call sites are
+// behind `NODE_ENV !== 'test' && !VITEST` precisely so no test ever commits,
+// which left this function with no coverage at all. Same seam as
+// `setReleasesUpdateExecImpl` below.
+type AutoGitCommitExecImpl = typeof exec;
+let autoGitCommitExecImpl: AutoGitCommitExecImpl | null = null;
+export const setAutoGitCommitExecImpl = (impl: AutoGitCommitExecImpl): void => {
+  autoGitCommitExecImpl = impl;
+};
+export const resetAutoGitCommitExecImpl = (): void => {
+  autoGitCommitExecImpl = null;
 };
 
-const autoGitCommit = async (item: AgEnFKItem, projectRoot: string): Promise<{ success: boolean; output: string; error?: string }> => {
+export const autoGitCommit = async (
+  item: AgEnFKItem,
+  projectRoot: string,
+  // Required, not optional. With a default, reverting any call site to two
+  // arguments would compile cleanly and silently disable auto-commit for every
+  // project — a regression the type system should refuse rather than absorb.
+  project: Project | null | undefined,
+): Promise<AutoGitCommitResult> => {
+  const timestamp = () => new Date().toISOString();
+
+  if (!(project as any)?.autoGitCommit) {
+    const reason = `auto-commit is off for project ${item.projectId}; enable it with \`agenfk update-project <id> --auto-git-commit true\``;
+    console.log(`[${timestamp()}] [AUTO_GIT] Skipped: ${reason}`);
+    return { success: false, output: '', skipped: reason };
+  }
+  if (!projectRoot) {
+    const reason = 'no project root resolved';
+    console.warn(`[${timestamp()}] [AUTO_GIT] Refused: ${reason}`);
+    return { success: false, output: '', skipped: reason };
+  }
+  // Canonicalise BOTH sides. `projectRoot` arrives realpath'd from
+  // `resolveProjectRoot`, `os.homedir()` does not, and where home is reached
+  // through a symlink (`/home -> /var/home`, a bind mount, an encrypted home)
+  // the two strings differ. A string comparison there lets the guard pass, and
+  // a dotfiles home genuinely is a git toplevel — so the next guard passes too
+  // and `git add -A` runs in the home directory. Exactly the disaster this
+  // function exists to prevent.
+  const resolvedRoot = safeRealpath(projectRoot);
+  if (resolvedRoot === safeRealpath(os.homedir())) {
+    const reason = `refusing to commit in the home directory (${projectRoot})`;
+    console.warn(`[${timestamp()}] [AUTO_GIT] Refused: ${reason}`);
+    return { success: false, output: '', skipped: reason };
+  }
+  const { top, error: gitError } = resolveRepoToplevelDetailed(projectRoot);
+  if (top !== resolvedRoot) {
+    const detail = gitError ? ` (git said: ${gitError})` : '';
+    const reason = `project root ${projectRoot} is not the toplevel of a git repository or worktree${detail}`;
+    console.warn(`[${timestamp()}] [AUTO_GIT] Refused: ${reason}`);
+    return { success: false, output: '', skipped: reason };
+  }
+
   const message = `close(${item.type.toLowerCase()}): ${item.title} [${item.id}]`;
   const cmd = `git add -A && git commit -m ${JSON.stringify(message)}`;
-  
+  const run = autoGitCommitExecImpl || exec;
+
   return new Promise((resolve) => {
-    exec(cmd, { cwd: projectRoot }, (err, stdout, stderr) => {
-      const timestamp = new Date().toISOString();
+    run(cmd, { cwd: projectRoot }, (err: any, stdout: any, stderr: any) => {
       if (err) {
-        const errMsg = err.message.trim();
-        console.log(`[${timestamp}] [AUTO_GIT] Commit failed: ${errMsg}`);
+        const errMsg = String(err.message).trim();
+        console.log(`[${timestamp()}] [AUTO_GIT] Commit failed: ${errMsg}`);
         resolve({ success: false, output: stderr || stdout, error: errMsg });
       } else {
-        console.log(`[${timestamp}] [AUTO_GIT] Committed: "${message}"\n${stdout.trim()}`);
-        resolve({ success: true, output: stdout.trim() });
+        console.log(`[${timestamp()}] [AUTO_GIT] Committed: "${message}"\n${String(stdout).trim()}`);
+        resolve({ success: true, output: String(stdout).trim() });
       }
     });
   });
@@ -1050,6 +1114,35 @@ app.put("/projects/:id/verify-command", asyncHandler(async (req: any, res: any) 
     res.json(updated);
   } catch (error) {
     res.status(404).json({ error: "Project not found" });
+  }
+}));
+
+// autoGitCommit makes the server run `git add -A && git commit` on the DONE
+// transition, so turning it on is privileged for the same reason verifyCommand
+// is: it is not a field an unauthenticated browser or LAN peer may set.
+// (Contradiction C5 / BUG 2df0f02f.)
+app.put("/projects/:id/auto-git-commit", asyncHandler(async (req: any, res: any) => {
+  if (req.headers['x-agenfk-internal'] !== VERIFY_TOKEN) {
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+  const { autoGitCommit: enabled } = req.body ?? {};
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: "autoGitCommit (boolean) required" });
+  }
+  try {
+    const updated = await storage.updateProject(req.params.id, { autoGitCommit: enabled } as any);
+    io.emit('items_updated');
+    res.json(updated);
+  } catch (error: any) {
+    // This is the OFF switch for a destructive feature. Reporting a read-only
+    // database or a corrupt row as "Project not found" would send the operator
+    // hunting for a mistyped id while auto-commit stays on.
+    const message = String(error?.message ?? '');
+    if (/not found/i.test(message)) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+    console.error(`[AUTO_GIT_SETTING] Failed to set autoGitCommit for ${req.params.id}: ${message}`);
+    return res.status(500).json({ error: "Could not update the project", detail: message });
   }
 }));
 
@@ -2246,7 +2339,7 @@ app.post("/items/bulk", asyncHandler(async (req: any, res: any) => {
         if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
           const proj = await storage.getProject(updated.projectId);
           const projectRoot = (proj as any)?.projectRoot || findProjectRoot(process.cwd());
-          await autoGitCommit(updated, projectRoot);
+          await autoGitCommit(updated, projectRoot, proj);
         }
       }
     } catch (e) {
@@ -2414,7 +2507,7 @@ app.put("/items/:id", asyncHandler(async (req: any, res: any) => {
         if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
           const proj = await storage.getProject(updated.projectId);
           const projectRoot = (proj as any)?.projectRoot || findProjectRoot(process.cwd());
-          await autoGitCommit(updated, projectRoot);
+          await autoGitCommit(updated, projectRoot, proj);
         } else {
           console.log(`[TEST_MODE] Skipping auto-git commit for item ${updated.id}`);
         }
@@ -2592,9 +2685,18 @@ async function handleValidateProgress(itemId: string, command: string | undefine
     ? `\n\n⚠️ MANDATORY EXIT CRITERIA — you MUST satisfy ALL of the following before calling validate_progress again:\n\n${nextStepCriteria}`
     : '';
   const branchRef = (item as any).branchName || 'HEAD';
-  const pushInstruction = nextStatus === Status.DONE
-    ? `\n\n🚀 **Push your branch**: The server has auto-committed the changes. Run:\n\`\`\`\ngit push -u origin ${branchRef}\n\`\`\``
-    : '';
+  // The instruction has to describe what actually happened. Auto-commit is off
+  // unless the project opts in, and even then the guards can refuse it — telling
+  // an agent "the server has auto-committed" and to push would have it ship a
+  // branch whose work is still unstaged, and report the item delivered.
+  const buildPushInstruction = (commit: AutoGitCommitResult | null): string => {
+    if (nextStatus !== Status.DONE) return '';
+    if (commit?.success) {
+      return `\n\n🚀 **Push your branch**: The server has auto-committed the changes. Run:\n\`\`\`\ngit push -u origin ${branchRef}\n\`\`\``;
+    }
+    const why = commit?.skipped ? `\n\n_Auto-commit did not run: ${commit.skipped}_` : '';
+    return `\n\n🚀 **Commit and push your branch**: nothing was committed for you. Run:\n\`\`\`\ngit add -A && git commit && git push -u origin ${branchRef}\n\`\`\`${why}`;
+  };
 
   // A command is only required for the final step (→ DONE). For intermediate
   // steps the command is optional — omitting it advances without running anything.
@@ -2624,8 +2726,14 @@ async function handleValidateProgress(itemId: string, command: string | undefine
         const updated = await storage.updateItem(itemId, updates);
         io.emit('items_updated');
         if (updated.parentId) await syncParentStatus(updated.parentId);
-        if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) autoGitCommit(updated, (project as any)?.projectRoot || findProjectRoot(process.cwd()));
-        return res.json({ status: Status.DONE, message: `✅ Validation Passed (sibling propagation)!\n\nItem moved to DONE.${pushInstruction}`, output: 'Sibling propagation' });
+        let sibCommit: AutoGitCommitResult | null = null;
+        if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
+          // Awaited, unlike before: the response below reports whether the
+          // commit happened, so it cannot be a floating promise any more.
+          try { sibCommit = await autoGitCommit(updated, (project as any)?.projectRoot || findProjectRoot(process.cwd()), project); }
+          catch (e: any) { console.error(`[validate] autoGitCommit failed after DONE: ${e?.message || e}`); }
+        }
+        return res.json({ status: Status.DONE, message: `✅ Validation Passed (sibling propagation)!\n\nItem moved to DONE.${buildPushInstruction(sibCommit)}`, output: 'Sibling propagation' });
       }
     } else {
       const passedSibling = siblings.find(s => {
@@ -2706,6 +2814,8 @@ async function handleValidateProgress(itemId: string, command: string | undefine
   }
   Object.assign(item, freshItem);
 
+  let commitResult: AutoGitCommitResult | null = null;
+
   const comments = [...(item.comments || []), {
     id: uuidv4(),
     author: 'ValidateTool',
@@ -2723,8 +2833,9 @@ async function handleValidateProgress(itemId: string, command: string | undefine
       if (updated.parentId) await syncParentStatus(updated.parentId);
       if (nextStatus === Status.DONE && process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
         // Advisory: a git-commit failure must not report a PASSED validation
-        // (whose transition already landed) as failed to the run follower.
-        try { await autoGitCommit(updated, projectRoot); }
+        // (whose transition already landed) as failed to the run follower. It
+        // must, however, be reported honestly in the message below.
+        try { commitResult = await autoGitCommit(updated, projectRoot, project); }
         catch (e: any) { console.error(`[validate] autoGitCommit failed after DONE: ${e?.message || e}`); }
       }
       recordHubEvent({
@@ -2755,7 +2866,7 @@ async function handleValidateProgress(itemId: string, command: string | undefine
       itemId,
       payload: { command: resolvedCommand, status: 'PASSED', testId },
     });
-    return res2.json({ status: nextStatus, message: `✅ Validation Passed!\n\nCommand: \`${resolvedCommand}\`\nItem moved to ${nextStatus}.${mandatoryInstructions}${pushInstruction}`, output: preview });
+    return res2.json({ status: nextStatus, message: `✅ Validation Passed!\n\nCommand: \`${resolvedCommand}\`\nItem moved to ${nextStatus}.${mandatoryInstructions}${buildPushInstruction(commitResult)}`, output: preview });
   } else {
     const updates: any = { status: failureStatus, comments };
     if (nextStatus === Status.DONE) {
@@ -2836,12 +2947,43 @@ app.post("/items/:id/validate", asyncHandler(async (req: any, res: any) => {
   }
   const cwd: string | undefined = typeof req.body.cwd === 'string' && req.body.cwd ? req.body.cwd : undefined;
   if (cwd) {
-    // Resolve the caller's cwd UP to the project root (nearest `.agenfk` ancestor)
-    // so the verifyCommand always runs at the repo root — even when `agenfk verify`
-    // was invoked from a subdirectory — and never in the daemon's own dir (CGLAB-13).
-    const resolvedRoot = findProjectRoot(cwd);
+    // Resolve the caller's cwd UP to the project root (nearest `.agenfk` marker
+    // at or below the caller's git toplevel) so the verifyCommand always runs at
+    // the repo root — even when `agenfk verify` was invoked from a subdirectory
+    // — and never in the daemon's own dir (CGLAB-13), and never in the user's
+    // home directory (BUG 37660bd2).
+    const resolution = resolveProjectRoot(cwd);
     const item = await storage.getItem(req.params.id);
-    if (item) await storage.updateProject(item.projectId, { projectRoot: resolvedRoot });
+    if (item) {
+      const project = await storage.getProject(item.projectId);
+      const previousRoot = (project as any)?.projectRoot as string | undefined;
+      // A repoint is a consequential, easily-missed event: the verifyCommand and
+      // the auto-commit both run at this path. Never change it silently.
+      const timestamp = new Date().toISOString();
+      if (previousRoot && previousRoot !== resolution.root) {
+        console.warn(`[${timestamp}] [PROJECT_ROOT] Repointing project ${item.projectId}: ${previousRoot} -> ${resolution.root} (source: ${resolution.source}, cwd: ${cwd})`);
+        try {
+          await storage.updateItem(req.params.id, {
+            comments: [...(item.comments || []), {
+              id: uuidv4(),
+              author: 'ValidateTool',
+              content: `### Project root repointed\n\n\`${previousRoot}\` → \`${resolution.root}\`\n\n**Resolved from**: \`${cwd}\` (source: \`${resolution.source}\`)\n\nThe verify command and any auto-commit run at the new path.`,
+              timestamp: new Date(),
+            }],
+          });
+        } catch (e: any) {
+          // The annotation is bookkeeping. Failing to write it must not fail the
+          // validate request itself — the same principle the auto-commit call
+          // site below already follows.
+          console.error(`[PROJECT_ROOT] Could not annotate the repoint on ${req.params.id}: ${e?.message || e}`);
+        }
+      } else if (!previousRoot) {
+        // The first assignment decides where verifyCommand runs from now on,
+        // `source: "fallback"` ("found no marker, using your cwd") included.
+        console.log(`[${timestamp}] [PROJECT_ROOT] Project ${item.projectId} root set to ${resolution.root} (source: ${resolution.source}, cwd: ${cwd})`);
+      }
+      await storage.updateProject(item.projectId, { projectRoot: resolution.root });
+    }
   }
   // One active run per item — a second verify while one runs is almost always
   // an agent misreading slowness as failure. Applies to sync requests too so

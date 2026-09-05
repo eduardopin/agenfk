@@ -20,6 +20,7 @@ import { execSync, execFileSync, spawnSync, spawn } from "child_process";
 import { getActiveStepItems, resolveStepContract, renderStepContract } from "./gatekeeper-utils";
 import { buildUpgradeNotice } from "./mcpUpgradeNotice";
 import { resolveBranchCheckout, renderBranchCheckout } from "./branch-checkout.js";
+import { findProjectRoot as sharedFindProjectRoot } from "./project-root.js";
 
 // Load the install-time secret token — must match what the API server loaded.
 const VERIFY_TOKEN = (() => {
@@ -87,22 +88,17 @@ async function validateViaApi(itemId: string, body: any): Promise<{ ok: boolean;
   }
 }
 
-const findProjectRoot = (startDir: string): string => {
-  if (process.env.AGENFK_PROJECT_ROOT) {
-    return process.env.AGENFK_PROJECT_ROOT;
-  }
-  if (process.env.AGENFK_DB_PATH) {
-    return path.dirname(path.dirname(process.env.AGENFK_DB_PATH));
-  }
-  let currentDir = startDir;
-  while (currentDir !== path.parse(currentDir).root) {
-    if (fs.existsSync(path.join(currentDir, ".agenfk"))) {
-      return currentDir;
-    }
-    currentDir = path.dirname(currentDir);
-  }
-  return startDir;
-};
+/**
+ * The MCP entry point's own view of the project root: the shared, repository-
+ * bounded resolution plus the two environment short-circuits this process
+ * honours. Reading `process.env` here rather than inside the module keeps the
+ * module pure and testable.
+ */
+const findProjectRoot = (startDir: string): string =>
+  sharedFindProjectRoot(startDir, {
+    envRoot: process.env.AGENFK_PROJECT_ROOT,
+    dbPath: process.env.AGENFK_DB_PATH,
+  });
 
 const findProjectId = (startDir: string): string | null => {
   const root = findProjectRoot(startDir);
