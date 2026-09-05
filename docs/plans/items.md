@@ -84,6 +84,8 @@ Plan §2.3 wants one branch (and, from T02, one worktree) per task, named
 | Task | Branch | Registered in AgEnFK |
 |---|---|---|
 | T01 | `feature/1b55c410-c21c-4ae0-a3da-887ea17073df_t01-bootstrap` | no — see finding below |
+| T02 | `feature/3d4988dc-f52f-4623-8a55-d27b18de7e47_t02-ad0-a` (worktree `../agenfk-wt/t02`) | no — same reason |
+| BUG `37660bd2` + BUG `2df0f02f` | `fix/37660bd2-a249-4e0e-977c-ace47df65fc3_project-root-boundary` (worktree `../agenfk-wt/hazards`) | no — same reason |
 
 **Finding — task branches cannot be registered on task items.** `agenfk branch create
 <task-id>` fails with *"Branches are tracked on top-level items only. Item
@@ -113,9 +115,19 @@ rule: a defect is a BUG, never a TASK).
 | Type | Title | Id | Found in |
 |---|---|---|---|
 | BUG | Flaky: hub `admin-installations` `beforeEach` times out at 30s under load; `database is not open` leaks from `afterEach` | `ed5535ae-4bfd-4a78-b083-ae110545b98a` | T01 baseline verification |
+| BUG | `findProjectRoot` escapes to `$HOME` when verify runs from a git worktree, running `verifyCommand` and `git add -A` outside the repo | `37660bd2-a249-4e0e-977c-ace47df65fc3` | T02 (first task to use a worktree) |
+| BUG | `autoGitCommit` runs `git add -A` inside the validate handler, sweeping unrelated files into a commit (C5) | `2df0f02f-7533-4733-b935-3a73f749fa22` | T02 / contradiction C5 |
+
+| TASK | Raise branch coverage to the 80% gate (currently 79.x%) | `47b3727a-451e-4774-bd9b-7e87f4e9a88c` | T02 coverage measurement |
 
 `packages/hub` is outside this plan's touch list and T01 may not modify `packages/`, so
 the defect is filed, not fixed. See `handoff-T01.md` for the full diagnosis.
+
+The two worktree hazards — `37660bd2` and `2df0f02f` — were **fixed ahead of T03** rather
+than deferred, on the owner's decision of 2026-09-04. They are the reason an unattended
+worker could not run here: one sends `verifyCommand` and `git add -A` to the user's home
+directory, the other stages the whole tree from inside the validate handler. `ed5535ae`
+(`packages/hub`) remains filed and unfixed — it is outside this plan's touch list.
 
 ## Status log
 
@@ -126,3 +138,12 @@ the defect is filed, not fixed. See `handoff-T01.md` for the full diagnosis.
 | 2026-09-03 | BUG `ed5535ae` | filed (hub test flake found during T01 verification) |
 | 2026-09-03 | T01 | `IN_PROGRESS → REVIEW → TEST → DONE`; server-side validation run `b7c8acad` re-ran `npm run build && npm test` and passed (219 files, 2,368 passed, 1 skipped) |
 | 2026-09-03 | T01 | PR [eduardopin/agenfk#1](https://github.com/eduardopin/agenfk/pull/1) opened from the fork and registered (`agenfk pr-register`, sizing `{task: 1}`) |
+| 2026-09-03 | T02 | `IN_PROGRESS → … → DONE` in worktree `../agenfk-wt/t02`; ADRs 0001–0003 approved by the owner before any code was written |
+| 2026-09-03 | BUG `37660bd2`, TASK `47b3727a` | filed during T02 |
+| 2026-09-04 | BUG `2df0f02f` | filed — contradiction C5 given its own item so the hazard is tracked on the board, not only in the contradictions log |
+| 2026-09-04 | — | Owner decision: the orchestrator stays deferred to Phase B (`docs/plans/orchestrator-design.md`); T03–T08 continue as supervised single sessions |
+| 2026-09-04 | T02 | PR [eduardopin/agenfk#2](https://github.com/eduardopin/agenfk/pull/2) opened, registered and squash-merged; `main` is now `3cc00bf3` |
+| 2026-09-04 | BUG `37660bd2` + BUG `2df0f02f` | Owner decision: fix both **before** T03, as the first unit of work. Branch `fix/37660bd2-…_project-root-boundary` |
+| 2026-09-04 | BUG `37660bd2` + BUG `2df0f02f` | both `IN_PROGRESS → REVIEW → TEST → DONE`; each final transition re-ran `npm run build && npm test` server-side and passed (224 files, 2,489 passed, 1 skipped) |
+| 2026-09-04 | BUG `37660bd2` + BUG `2df0f02f` | PR [eduardopin/agenfk#3](https://github.com/eduardopin/agenfk/pull/3) opened and registered (`agenfk pr-register`, declared sizing `{bug: 2}`; the server's shadow counts 1, since only the anchor item is linked) |
+| 2026-09-04 | T02 worktree | removed — the branch's tree is identical to `main` after the squash-merge. Local branches for T01 and T02 kept |
