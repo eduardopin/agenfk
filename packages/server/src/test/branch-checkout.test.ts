@@ -206,6 +206,56 @@ describe("resolveBranchCheckout — refuses to act near uncommitted work", () =>
     expect(fs.readFileSync(path.join(dirty, "f.txt"), "utf8")).toContain("work in progress");
   });
 
+  // The dirty cases above pin one half of the boundary and, on their own, not
+  // enough of it: real `git status --porcelain` output for a dirty tree is never
+  // a single space, so replacing the emptiness test with `!== " "` leaves them
+  // both green. Found by mutation #2. What such a mutant actually breaks is the
+  // CLEAN side — an empty status stops counting as clean — so the boundary needs
+  // its positive half asserted here, by the tests that own this behaviour rather
+  // than incidentally by happy-path tests of other things.
+  it("treats an empty status as clean and proceeds to switch", () => {
+    const seen: string[][] = [];
+    setGitRunnerImpl((_cwd, args) => {
+      seen.push(args);
+      if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { out: "main" };
+      if (args[0] === "rev-parse") return { out: "abc123" };
+      if (args[0] === "worktree") return { out: "" };
+      if (args[0] === "status") return { out: "" };
+      if (args[0] === "switch") return { out: "Switched to branch 'target'" };
+      return { out: "" };
+    });
+    try {
+      expect(resolveBranchCheckout("target", { cwd: "/anywhere" })).toEqual({
+        kind: "checked-out",
+        branch: "target",
+      });
+      expect(seen.some((a) => a[0] === "switch")).toBe(true);
+    } finally {
+      resetGitRunnerImpl();
+    }
+  });
+
+  it("treats any non-empty status as dirty, including a lone space", () => {
+    // A single space is not output git produces, which is exactly why it belongs
+    // here: the check must be emptiness, not inequality against some other value.
+    for (const porcelain of ["", " ", " M f.txt", "?? new.txt", "A  staged.txt"]) {
+      setGitRunnerImpl((_cwd, args) => {
+        if (args[0] === "rev-parse" && args[1] === "--abbrev-ref") return { out: "main" };
+        if (args[0] === "rev-parse") return { out: "abc123" };
+        if (args[0] === "worktree") return { out: "" };
+        if (args[0] === "status") return { out: porcelain };
+        if (args[0] === "switch") return { out: "ok" };
+        return { out: "" };
+      });
+      try {
+        const outcome = resolveBranchCheckout("target", { cwd: "/anywhere" });
+        expect(outcome.kind).toBe(porcelain === "" ? "checked-out" : "refused-dirty");
+      } finally {
+        resetGitRunnerImpl();
+      }
+    }
+  });
+
   it("counts an untracked file as dirty too", () => {
     const dirty2 = path.join(tmp, "dirtyrepo2");
     fs.mkdirSync(dirty2);
