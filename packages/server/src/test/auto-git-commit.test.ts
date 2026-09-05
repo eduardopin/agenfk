@@ -14,6 +14,28 @@ import * as path from 'path';
 import { execFileSync } from 'child_process';
 import type { AgEnFKItem, Project } from '@agenfk/core';
 
+// `autoGitCommit` compares the project root with `os.homedir()`. Proving that
+// comparison canonicalises both sides needs a home directory reached through a
+// symlink — the `/home -> /var/home` layout, a bind mount, an encrypted home —
+// which means controlling `os.homedir()`.
+const { fakeHomeLink, fakeHomeReal } = vi.hoisted(() => {
+  const nodeFs = require('fs') as typeof import('fs');
+  const nodePath = require('path') as typeof import('path');
+  const nodeOs = require('os') as typeof import('os');
+  const base = nodeFs.realpathSync(nodeFs.mkdtempSync(nodePath.join(nodeOs.tmpdir(), 'agenfk-symhome-')));
+  const real = nodePath.join(base, 'var', 'home', 'u');
+  nodeFs.mkdirSync(real, { recursive: true });
+  nodeFs.mkdirSync(nodePath.join(base, 'home'), { recursive: true });
+  const link = nodePath.join(base, 'home', 'u');
+  nodeFs.symlinkSync(real, link, 'dir');
+  return { fakeHomeLink: link, fakeHomeReal: real, base };
+});
+
+vi.mock('os', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('os')>();
+  return { ...actual, default: actual, homedir: () => fakeHomeLink };
+});
+
 vi.mock('axios', () => {
   const mockAxios = vi.fn() as any;
   mockAxios.get = vi.fn();
@@ -137,6 +159,27 @@ describe('autoGitCommit — repository-boundary guards', () => {
     expect(res.success).toBe(false);
     expect(res.skipped).toContain('no project root');
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe('autoGitCommit — a symlinked home directory', () => {
+  it('refuses a home directory reached through a symlink, even though it is a real git toplevel', () => {
+    // The regression the string comparison allowed: `projectRoot` arrives
+    // realpath'd, `os.homedir()` does not, so `/base/var/home/u` and
+    // `/base/home/u` compared unequal — and a dotfiles home genuinely IS a git
+    // toplevel, so the next guard passed too and `git add -A` ran in $HOME.
+    git(fakeHomeReal, 'init', '-q', '-b', 'main');
+    git(fakeHomeReal, 'config', 'user.email', 'test@example.com');
+    git(fakeHomeReal, 'config', 'user.name', 'Test');
+    fs.writeFileSync(path.join(fakeHomeReal, '.bashrc'), 'export X=1\n');
+    git(fakeHomeReal, 'add', '-A');
+    git(fakeHomeReal, 'commit', '-qm', 'dotfiles');
+
+    return autoGitCommit(item, fakeHomeReal, project(true)).then((res) => {
+      expect(res.success).toBe(false);
+      expect(res.skipped).toContain('home directory');
+      expect(calls).toHaveLength(0);
+    });
   });
 });
 

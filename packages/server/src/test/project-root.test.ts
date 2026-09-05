@@ -170,6 +170,53 @@ describe("resolveProjectRoot", () => {
   });
 });
 
+describe("resolveProjectRoot — home as a repository", () => {
+  it("refuses the home directory even when home is itself a git toplevel", () => {
+    // A dotfiles repo (`git init ~`) is the exact machine this fix exists for.
+    // The home exclusion has to cover the git-toplevel branch, not only the
+    // marker walk, or `verifyCommand` still runs in $HOME.
+    const homeRepo = path.join(fakeHome, ".git");
+    const created = !fs.existsSync(homeRepo);
+    if (created) {
+      git(fakeHome, "init", "-q", "-b", "main");
+      git(fakeHome, "config", "user.email", "test@example.com");
+      git(fakeHome, "config", "user.name", "Test");
+    }
+    try {
+      const under = path.join(fakeHome, "notes", "deep");
+      fs.mkdirSync(under, { recursive: true });
+      const result = resolveProjectRoot(under);
+      expect(result.root).not.toBe(fakeHome);
+      expect(result).toEqual({ root: fs.realpathSync(under), source: "fallback" });
+    } finally {
+      if (created) fs.rmSync(homeRepo, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("resolveProjectRoot — submodules", () => {
+  it("climbs out of a submodule to the superproject that carries the marker", () => {
+    // Before the boundary existed this resolved to the superproject via the
+    // marker. Stopping at the submodule's own toplevel would repoint the project
+    // to the submodule and run the monorepo's verifyCommand there.
+    const superRoot = makeRepo(path.join(tmp, "super"));
+    fs.mkdirSync(path.join(superRoot, ".agenfk"));
+    const lib = makeRepo(path.join(tmp, "lib"));
+    git(superRoot, "-c", "protocol.file.allow=always", "submodule", "add", "-q", lib, "vendor/lib");
+    const inSub = path.join(superRoot, "vendor", "lib");
+    expect(resolveProjectRoot(inSub)).toEqual({ root: superRoot, source: "marker" });
+  });
+
+  it("keeps an unrelated nested clone on its own boundary", () => {
+    // Not a submodule: a vendored clone is a different project and must not
+    // inherit a marker from the directory it happens to sit in.
+    const outer = path.join(tmp, "outer-nested");
+    fs.mkdirSync(path.join(outer, ".agenfk"), { recursive: true });
+    const inner = makeRepo(path.join(outer, "inner"));
+    expect(resolveProjectRoot(inner)).toEqual({ root: inner, source: "git-toplevel" });
+  });
+});
+
 describe("findProjectRoot", () => {
   it("returns just the root", () => {
     expect(findProjectRoot(repo)).toBe(repo);

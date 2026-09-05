@@ -100,14 +100,20 @@ because an unattended worker could not run here while it stood. Auto-commit is n
 internal-token route `PUT /projects/:id/auto-git-commit` or `agenfk update-project
 <id> --auto-git-commit true`), and it refuses any project root that is not itself
 the toplevel of a git repository or worktree, the home directory included. Every
-refusal is logged with its reason. The helper gained an exec seam and its first
-tests — it had none, because all four call sites sit behind the vitest guard.
+refusal is logged with its reason, and the DONE response now reports whether a
+commit actually happened instead of asserting one unconditionally. The helper
+gained an exec seam and its first tests — it had none, because all four call sites
+sit behind the vitest guard.
 
 **Design still deferred** to T07/T25: worktree-scoped, execution-aware auto-commit
 — one that knows which `Execution` and which `WorktreeBinding` it belongs to and
 never runs `git add -A` across an unbound tree. Opting in still sweeps the whole
 tree at the project root; the guards bound *where* that happens, not *what* it
-stages.
+stages. Concretely, the guards prove the target is *a* git toplevel, not *this
+item's*: `project.projectRoot` is whatever the last validated item resolved, so
+with two active worktrees, closing an item through a path that sends no `cwd`
+can commit in the other one. **Opting in is only safe with a single active
+worktree per project until T07 lands.**
 
 ### C6 — No redaction layer on the Hub outbox
 

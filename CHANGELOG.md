@@ -47,6 +47,24 @@ All notable changes to AgEnFK are documented here.
   everything in the tree, and with per-task git worktrees — which the workflow now
   expects — that sweeps unrelated work into a commit. Contradiction C5.
 
+  **Opting in is only safe with one active worktree per project.** The guards bound
+  *where* the commit happens, not *what* it stages: the project root is whatever the
+  last validated item resolved, so closing an item that never sent a `cwd` can commit
+  in another task's worktree. Worktree-scoped, execution-aware auto-commit is T07/T25.
+- **The DONE response no longer claims the server committed when it did not.** It
+  previously said "The server has auto-committed the changes" on every DONE
+  transition; with auto-commit off by default that was false for every project, and
+  an agent following it would push a branch whose work was still unstaged. The
+  message now reports what actually happened, and names the reason when the commit
+  was skipped.
+- **`findProjectRoot` no longer resolves a submodule to the submodule.** The
+  repository boundary added below stops at the caller's git toplevel, which for a
+  submodule or a vendored clone is the inner repository rather than the project that
+  carries the `.agenfk` marker. Submodules now climb to the outermost superproject,
+  so the marker above is found as before. An **unrelated** nested clone keeps its own
+  boundary and no longer inherits a marker from the directory it sits in — a
+  deliberate behaviour change for that case.
+
 ### Fixed
 - Documentation stated that storage used `better-sqlite3`. It has always used
   Node's built-in `node:sqlite`. Corrected in `CLAUDE.md`, `AGENTS.md` and
@@ -62,9 +80,23 @@ All notable changes to AgEnFK are documented here.
   `project.projectRoot` and ran the project's `verifyCommand` there — and, before
   the change above, `git add -A && git commit` as well. A `.agenfk` marker now
   counts only at or below the caller's git toplevel, `os.homedir()` never counts,
-  and a worktree resolves to its own root. The two divergent copies of the walk, in
-  `server.ts` and the MCP entry point `index.ts`, are now one module,
-  `packages/server/src/project-root.ts`.
+  and a worktree resolves to its own root. The two divergent copies of the walk in
+  `packages/server` — `server.ts` and the MCP entry point `index.ts` — are now one
+  module, `packages/server/src/project-root.ts`. The CLI's third copy,
+  `findProjectJsonPath`, had the same defect against `.agenfk/project.json` and now
+  carries the same two rules; it stays duplicated because neither package the CLI
+  depends on may hold a resolver that needs `fs` and `child_process`.
+- **The home directory is refused on every path, not just the marker walk.** Where
+  `$HOME` is itself a git repository — a dotfiles repo, the exact setup this bug
+  endangers — the repository-boundary branch used to return it. And
+  `autoGitCommit`'s home guard compared unresolved paths, so a home reached through
+  a symlink (`/home` → `/var/home`, a bind mount, an encrypted home) slipped past it
+  and committed the whole home directory.
+- **`git` failures are no longer indistinguishable from "not a repository".** `git`
+  missing from the daemon's PATH, dubious ownership, or a wedged mount silently
+  removed the repository boundary for every resolution; they are now logged, carried
+  into the refusal message, and the git call has a timeout so a stale network mount
+  cannot wedge the daemon.
 - **A change of `project.projectRoot` is no longer silent**: the server logs the
   repoint with the directory it resolved from, and records it as an item comment.
 - **`autoGitCommit` refuses to run outside a repository root**, the home directory

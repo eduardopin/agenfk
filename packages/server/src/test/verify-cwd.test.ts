@@ -125,6 +125,26 @@ describe('CGLAB-13 — verifyCommand runs in the project working directory', () 
     expect(proj.projectRoot).toBe(projRoot);
   });
 
+  // ── C5 — the DONE message must not claim a commit that did not happen ───────
+
+  it('does not tell the caller the server auto-committed when it did not', async () => {
+    if (!VERIFY_TOKEN) return;
+    // Auto-commit is off by default, and under vitest the call sites are
+    // skipped entirely. Either way nothing was committed, so an agent following
+    // this message must be told to commit — not to push work that is still
+    // unstaged and then report the item delivered.
+    const { item } = await itemOnFinalStep('CWD7', 'true');
+    const res = await request(app)
+      .post(`/items/${item.id}/validate`)
+      .set('x-agenfk-internal', VERIFY_TOKEN)
+      .send({ async: true, cwd: projRoot });
+    const done = await waitForRun(res.body.runId);
+
+    expect(done.body.status).toBe('passed');
+    expect(done.body.message).not.toContain('has auto-committed');
+    expect(done.body.message).toContain('Commit and push your branch');
+  });
+
   // ── BUG 37660bd2 — the repository boundary ──────────────────────────────────
 
   const git = (cwd: string, ...args: string[]) =>

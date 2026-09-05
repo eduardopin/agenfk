@@ -1360,13 +1360,43 @@ program
   });
 
 /**
- * Find the nearest .agenfk/project.json by searching upwards from startDir.
+ * Find the nearest `.agenfk/project.json` by searching upwards from startDir.
+ *
+ * Bounded the same way as the server's resolver
+ * (`packages/server/src/project-root.ts`, BUG 37660bd2): the search stops at the
+ * caller's git toplevel and never accepts the home directory. Without those two
+ * rules, a user who once ran `agenfk init` in `$HOME` gets a
+ * `~/.agenfk/project.json`, and from then on every worktree and every
+ * uninitialised directory binds to that home project.
+ *
+ * The logic is duplicated rather than imported because the CLI depends only on
+ * `@agenfk/core` (which is deliberately dependency-free and Node-free, ADR-0001
+ * D2/D5) and `@agenfk/telemetry` — neither is a legal home for a resolver that
+ * needs `fs` and `child_process`. Recorded as debt; the natural fix is the
+ * shared runtime package T03 introduces.
  */
 function findProjectJsonPath(startDir: string): string | null {
-  let currentDir = startDir;
+  const realpath = (p: string): string => {
+    try { return fs.realpathSync(p); } catch { return path.resolve(p); }
+  };
+  let toplevel: string | undefined;
+  try {
+    // `execFileSync`, not `execSync`: argv form, no shell, nothing to quote.
+    const out = execFileSync('git', ['rev-parse', '--show-toplevel'], {
+      cwd: startDir, encoding: 'utf8', stdio: ['pipe', 'pipe', 'pipe'], timeout: 5000, windowsHide: true,
+    }).trim();
+    if (out) toplevel = realpath(out);
+  } catch { /* not a repository, or no git — fall back to the unbounded walk */ }
+
+  const home = realpath(os.homedir());
+  let currentDir = path.resolve(startDir);
   while (currentDir !== path.parse(currentDir).root) {
-    const projFile = path.join(currentDir, '.agenfk', 'project.json');
-    if (fs.existsSync(projFile)) return projFile;
+    const resolved = realpath(currentDir);
+    if (resolved !== home) {
+      const projFile = path.join(currentDir, '.agenfk', 'project.json');
+      if (fs.existsSync(projFile)) return projFile;
+    }
+    if (toplevel !== undefined && resolved === toplevel) break;
     currentDir = path.dirname(currentDir);
   }
   return null;

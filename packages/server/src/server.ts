@@ -35,7 +35,7 @@ import { exec, execSync, execFileSync, spawn } from "child_process";
 import { createServer } from "http";
 import { Server } from "socket.io";
 import { createCapabilitiesRouter, readFeatureConfig } from "./routes/capabilities.js";
-import { findProjectRoot, resolveProjectRoot, isRepoToplevel } from "./project-root.js";
+import { findProjectRoot, resolveProjectRoot, resolveRepoToplevelDetailed, safeRealpath } from "./project-root.js";
 
 // The local API server is for this machine only. It binds to loopback by
 // default (override with AGENFK_HOST) and only accepts browser requests from
@@ -570,7 +570,10 @@ export const resetAutoGitCommitExecImpl = (): void => {
 export const autoGitCommit = async (
   item: AgEnFKItem,
   projectRoot: string,
-  project?: Project | null,
+  // Required, not optional. With a default, reverting any call site to two
+  // arguments would compile cleanly and silently disable auto-commit for every
+  // project — a regression the type system should refuse rather than absorb.
+  project: Project | null | undefined,
 ): Promise<AutoGitCommitResult> => {
   const timestamp = () => new Date().toISOString();
 
@@ -584,13 +587,23 @@ export const autoGitCommit = async (
     console.warn(`[${timestamp()}] [AUTO_GIT] Refused: ${reason}`);
     return { success: false, output: '', skipped: reason };
   }
-  if (path.resolve(projectRoot) === path.resolve(os.homedir())) {
+  // Canonicalise BOTH sides. `projectRoot` arrives realpath'd from
+  // `resolveProjectRoot`, `os.homedir()` does not, and where home is reached
+  // through a symlink (`/home -> /var/home`, a bind mount, an encrypted home)
+  // the two strings differ. A string comparison there lets the guard pass, and
+  // a dotfiles home genuinely is a git toplevel — so the next guard passes too
+  // and `git add -A` runs in the home directory. Exactly the disaster this
+  // function exists to prevent.
+  const resolvedRoot = safeRealpath(projectRoot);
+  if (resolvedRoot === safeRealpath(os.homedir())) {
     const reason = `refusing to commit in the home directory (${projectRoot})`;
     console.warn(`[${timestamp()}] [AUTO_GIT] Refused: ${reason}`);
     return { success: false, output: '', skipped: reason };
   }
-  if (!isRepoToplevel(projectRoot)) {
-    const reason = `project root ${projectRoot} is not the toplevel of a git repository or worktree`;
+  const { top, error: gitError } = resolveRepoToplevelDetailed(projectRoot);
+  if (top !== resolvedRoot) {
+    const detail = gitError ? ` (git said: ${gitError})` : '';
+    const reason = `project root ${projectRoot} is not the toplevel of a git repository or worktree${detail}`;
     console.warn(`[${timestamp()}] [AUTO_GIT] Refused: ${reason}`);
     return { success: false, output: '', skipped: reason };
   }
@@ -1120,8 +1133,16 @@ app.put("/projects/:id/auto-git-commit", asyncHandler(async (req: any, res: any)
     const updated = await storage.updateProject(req.params.id, { autoGitCommit: enabled } as any);
     io.emit('items_updated');
     res.json(updated);
-  } catch (error) {
-    res.status(404).json({ error: "Project not found" });
+  } catch (error: any) {
+    // This is the OFF switch for a destructive feature. Reporting a read-only
+    // database or a corrupt row as "Project not found" would send the operator
+    // hunting for a mistyped id while auto-commit stays on.
+    const message = String(error?.message ?? '');
+    if (/not found/i.test(message)) {
+      return res.status(404).json({ error: "Project not found" });
+    }
+    console.error(`[AUTO_GIT_SETTING] Failed to set autoGitCommit for ${req.params.id}: ${message}`);
+    return res.status(500).json({ error: "Could not update the project", detail: message });
   }
 }));
 
@@ -2664,9 +2685,18 @@ async function handleValidateProgress(itemId: string, command: string | undefine
     ? `\n\n⚠️ MANDATORY EXIT CRITERIA — you MUST satisfy ALL of the following before calling validate_progress again:\n\n${nextStepCriteria}`
     : '';
   const branchRef = (item as any).branchName || 'HEAD';
-  const pushInstruction = nextStatus === Status.DONE
-    ? `\n\n🚀 **Push your branch**: The server has auto-committed the changes. Run:\n\`\`\`\ngit push -u origin ${branchRef}\n\`\`\``
-    : '';
+  // The instruction has to describe what actually happened. Auto-commit is off
+  // unless the project opts in, and even then the guards can refuse it — telling
+  // an agent "the server has auto-committed" and to push would have it ship a
+  // branch whose work is still unstaged, and report the item delivered.
+  const buildPushInstruction = (commit: AutoGitCommitResult | null): string => {
+    if (nextStatus !== Status.DONE) return '';
+    if (commit?.success) {
+      return `\n\n🚀 **Push your branch**: The server has auto-committed the changes. Run:\n\`\`\`\ngit push -u origin ${branchRef}\n\`\`\``;
+    }
+    const why = commit?.skipped ? `\n\n_Auto-commit did not run: ${commit.skipped}_` : '';
+    return `\n\n🚀 **Commit and push your branch**: nothing was committed for you. Run:\n\`\`\`\ngit add -A && git commit && git push -u origin ${branchRef}\n\`\`\`${why}`;
+  };
 
   // A command is only required for the final step (→ DONE). For intermediate
   // steps the command is optional — omitting it advances without running anything.
@@ -2696,8 +2726,14 @@ async function handleValidateProgress(itemId: string, command: string | undefine
         const updated = await storage.updateItem(itemId, updates);
         io.emit('items_updated');
         if (updated.parentId) await syncParentStatus(updated.parentId);
-        if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) autoGitCommit(updated, (project as any)?.projectRoot || findProjectRoot(process.cwd()), project);
-        return res.json({ status: Status.DONE, message: `✅ Validation Passed (sibling propagation)!\n\nItem moved to DONE.${pushInstruction}`, output: 'Sibling propagation' });
+        let sibCommit: AutoGitCommitResult | null = null;
+        if (process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
+          // Awaited, unlike before: the response below reports whether the
+          // commit happened, so it cannot be a floating promise any more.
+          try { sibCommit = await autoGitCommit(updated, (project as any)?.projectRoot || findProjectRoot(process.cwd()), project); }
+          catch (e: any) { console.error(`[validate] autoGitCommit failed after DONE: ${e?.message || e}`); }
+        }
+        return res.json({ status: Status.DONE, message: `✅ Validation Passed (sibling propagation)!\n\nItem moved to DONE.${buildPushInstruction(sibCommit)}`, output: 'Sibling propagation' });
       }
     } else {
       const passedSibling = siblings.find(s => {
@@ -2778,6 +2814,8 @@ async function handleValidateProgress(itemId: string, command: string | undefine
   }
   Object.assign(item, freshItem);
 
+  let commitResult: AutoGitCommitResult | null = null;
+
   const comments = [...(item.comments || []), {
     id: uuidv4(),
     author: 'ValidateTool',
@@ -2795,8 +2833,9 @@ async function handleValidateProgress(itemId: string, command: string | undefine
       if (updated.parentId) await syncParentStatus(updated.parentId);
       if (nextStatus === Status.DONE && process.env.NODE_ENV !== 'test' && !process.env.VITEST) {
         // Advisory: a git-commit failure must not report a PASSED validation
-        // (whose transition already landed) as failed to the run follower.
-        try { await autoGitCommit(updated, projectRoot, project); }
+        // (whose transition already landed) as failed to the run follower. It
+        // must, however, be reported honestly in the message below.
+        try { commitResult = await autoGitCommit(updated, projectRoot, project); }
         catch (e: any) { console.error(`[validate] autoGitCommit failed after DONE: ${e?.message || e}`); }
       }
       recordHubEvent({
@@ -2827,7 +2866,7 @@ async function handleValidateProgress(itemId: string, command: string | undefine
       itemId,
       payload: { command: resolvedCommand, status: 'PASSED', testId },
     });
-    return res2.json({ status: nextStatus, message: `✅ Validation Passed!\n\nCommand: \`${resolvedCommand}\`\nItem moved to ${nextStatus}.${mandatoryInstructions}${pushInstruction}`, output: preview });
+    return res2.json({ status: nextStatus, message: `✅ Validation Passed!\n\nCommand: \`${resolvedCommand}\`\nItem moved to ${nextStatus}.${mandatoryInstructions}${buildPushInstruction(commitResult)}`, output: preview });
   } else {
     const updates: any = { status: failureStatus, comments };
     if (nextStatus === Status.DONE) {
@@ -2920,17 +2959,28 @@ app.post("/items/:id/validate", asyncHandler(async (req: any, res: any) => {
       const previousRoot = (project as any)?.projectRoot as string | undefined;
       // A repoint is a consequential, easily-missed event: the verifyCommand and
       // the auto-commit both run at this path. Never change it silently.
+      const timestamp = new Date().toISOString();
       if (previousRoot && previousRoot !== resolution.root) {
-        const timestamp = new Date().toISOString();
         console.warn(`[${timestamp}] [PROJECT_ROOT] Repointing project ${item.projectId}: ${previousRoot} -> ${resolution.root} (source: ${resolution.source}, cwd: ${cwd})`);
-        await storage.updateItem(req.params.id, {
-          comments: [...(item.comments || []), {
-            id: uuidv4(),
-            author: 'ValidateTool',
-            content: `### Project root repointed\n\n\`${previousRoot}\` → \`${resolution.root}\`\n\n**Resolved from**: \`${cwd}\` (source: \`${resolution.source}\`)\n\nThe verify command and any auto-commit run at the new path.`,
-            timestamp: new Date(),
-          }],
-        });
+        try {
+          await storage.updateItem(req.params.id, {
+            comments: [...(item.comments || []), {
+              id: uuidv4(),
+              author: 'ValidateTool',
+              content: `### Project root repointed\n\n\`${previousRoot}\` → \`${resolution.root}\`\n\n**Resolved from**: \`${cwd}\` (source: \`${resolution.source}\`)\n\nThe verify command and any auto-commit run at the new path.`,
+              timestamp: new Date(),
+            }],
+          });
+        } catch (e: any) {
+          // The annotation is bookkeeping. Failing to write it must not fail the
+          // validate request itself — the same principle the auto-commit call
+          // site below already follows.
+          console.error(`[PROJECT_ROOT] Could not annotate the repoint on ${req.params.id}: ${e?.message || e}`);
+        }
+      } else if (!previousRoot) {
+        // The first assignment decides where verifyCommand runs from now on,
+        // `source: "fallback"` ("found no marker, using your cwd") included.
+        console.log(`[${timestamp}] [PROJECT_ROOT] Project ${item.projectId} root set to ${resolution.root} (source: ${resolution.source}, cwd: ${cwd})`);
       }
       await storage.updateProject(item.projectId, { projectRoot: resolution.root });
     }
