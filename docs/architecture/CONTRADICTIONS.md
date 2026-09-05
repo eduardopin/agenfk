@@ -26,7 +26,7 @@ decision before the owning task can proceed.
 | C8 | plan §1.3 | Two commit conventions; `CHANGELOG.md` is stale | resolved | T02 |
 | C9 | plan §1.3 | Spec wants design/visual evidence; repo has no browser e2e | deferred | T26 |
 | C10 | plan §1.3 | `AGENFK_COMPARISON.md` says AgEnFK "does not address session lifecycle" | deferred | Phase B (ADR-0003) |
-| C11 | T01 #1 | Branches cannot be registered on leaf items | decided, deferred | T07 |
+| C11 | T01 #1 | Branches cannot be registered on leaf items | resolved (decision reversed 2026-09-04) | item 74ab38b4 |
 | C12 | T01 #2 | No CLI path binds a project to a filesystem directory | deferred | T03 |
 | C13 | T01 #3 | `agenfk tokens --item` returns `[]`; plan §3's measurement model depends on it | decided, diagnosis pulled forward | T03 diagnosis, T29 fix |
 | C14 | T02 | Card says `GET /capabilities`; spec §23.1 and T03 use `/v1/…`; repo uses bare paths | resolved | T02 (ADR-0001 D6) |
@@ -155,12 +155,36 @@ does not fire for task items.
 `docs/plans/items.md` plus an item comment. T01 and T02 both did this.
 
 **Decided 2026-09-03 (owner): (B) — `WorktreeBinding` (D4/T07) owns the item↔branch
-link.** `branchName` is not relaxed to leaf items, so no public contract changes now and
-T07 does not inherit two overlapping representations. The binding entity has to map an
-item to a branch *and* a working directory anyway, which is strictly more than
-`branchName` can express. Accepted cost: until T07 lands, task branches are created with
-plain `git`, recorded in `docs/plans/items.md`, and the gatekeeper's branch auto-checkout
-does not fire for task items.
+link.** `branchName` was not to be relaxed, so no public contract would change and T07
+would not inherit two overlapping representations. Accepted cost: task branches created
+with plain `git` until T07 lands.
+
+**Reversed 2026-09-04 (owner): (A) — relax the constraint.** Item
+`74ab38b4-1222-447e-b161-f246502c7bb0`. The earlier decision priced the cost as four more
+tasks of manual branch bookkeeping; three findings changed that price:
+
+1. **The constraint is CLI-only.** Three guards in `packages/cli/src/index.ts`. The server
+   already accepts `branchName` on any item (`PUT /items/:id` allowlists it with no parent
+   check), so relaxing it changes no server contract and no storage shape — far less than
+   "a public contract change" implied.
+2. **The inheritance the rule rested on does not exist.** `SDLC.md` §2 said child tasks
+   inherit the parent's branch; nothing in the codebase ever walked up to a parent. There
+   was no coherent behaviour being protected.
+3. **The gatekeeper's auto-checkout had never worked at all**, for anyone, on any item.
+   `packages/server/src/index.ts` ran `git rev-parse --verify -- <branch>`, where `--`
+   tells git that everything after it is a *path* — so it answered *"Needed a single
+   revision"* for every branch that has ever existed, and the catch-all reported *"Branch
+   does not exist locally"*. The feature documented in `SDLC.md` §"Gatekeeper Branch
+   Checkout" was inert. Deferring C11 would have deferred discovering that.
+
+This does **not** replace `WorktreeBinding`. T07 still owns execution-scoped binding of an
+item to a branch *and* a working directory, which is strictly more than `branchName` can
+express. C11 makes the existing field usable on the items this plan actually works on.
+
+**Resolution.** The three guards are gone; the gatekeeper's branch check is a tested module
+(`packages/server/src/branch-checkout.ts`) that distinguishes already-on, checked-out,
+held-by-another-worktree, missing, refused and not-a-repo, instead of collapsing all six
+into one false message. Recorded as BREAKING (behaviour) in `CHANGELOG.md`.
 
 ### C12 — No CLI path binds a project to a directory
 

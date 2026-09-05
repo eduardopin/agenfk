@@ -3370,10 +3370,6 @@ branchCmd
   .action(async (itemId, options) => {
     try {
       const { data: item } = await axios.get(`${API_URL}/items/${itemId}`);
-      if (item.parentId) {
-        console.error(chalk.red(`❌ Branches are tracked on top-level items only. Item [${itemId.substring(0, 8)}] is a child of [${item.parentId.substring(0, 8)}]. Run this command on the parent item instead.`));
-        process.exit(1);
-      }
       const explicitName = options.name !== undefined ? options.name.trim() : undefined;
       // trimmed above: '' here catches empty and whitespace-only; undefined falls through to generation
       if (explicitName === '') {
@@ -3466,11 +3462,6 @@ branchCmd
   .action(async (itemId, branchName) => {
     try {
       const { data: item } = await axios.get(`${API_URL}/items/${itemId}`);
-      if (item.parentId) {
-        console.error(chalk.red(`❌ Branches are tracked on top-level items only. Item [${itemId.substring(0, 8)}] is a child of [${item.parentId.substring(0, 8)}]. Run this command on the parent item instead.`));
-        process.exit(1);
-        return;
-      }
 
       // Validate branch name to prevent shell injection
       if (/[^a-zA-Z0-9\-_./]/.test(branchName)) {
@@ -3526,10 +3517,6 @@ prCmd
     }
     try {
       const { data: item } = await axios.get(`${API_URL}/items/${itemId}`);
-      if (item.parentId) {
-        console.error(chalk.red(`❌ PRs are tracked on top-level items only. Item [${itemId.substring(0, 8)}] is a child of [${item.parentId.substring(0, 8)}]. Run this command on the parent item instead.`));
-        process.exit(1);
-      }
       const prTitle = options.title || item.title;
       const args = ['pr', 'create', '--title', prTitle];
       if (options.body) { args.push('--body', options.body); } else { args.push('--body', item.description || ''); }

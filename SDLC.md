@@ -55,7 +55,7 @@ Branches are managed manually by the developer. AgenFK does not create branches 
 
 The developer creates the branch and links it to the item via `update_item({ id, branchName: '<branch>' })`.
 
-Branches are only tracked on **top-level items** (no `parentId`). Child tasks inherit the parent's branch.
+Any item may carry a `branchName`, leaf tasks included. Branches were once tracked only on top-level items, on the theory that child tasks inherited the parent's branch — but nothing ever implemented that inheritance, and a plan whose only top-level item is an epic cannot give its tasks a branch each. The constraint was removed (C11).
 
 ### Gatekeeper Branch Checkout
 
@@ -190,7 +190,7 @@ The item tracks PR state:
 The Kanban board displays:
 - A **branch chip** (monospace, truncated) showing the branch name.
 - A **PR badge** (color-coded by status, clickable link to the PR).
-- Both are only shown on top-level items (`!item.parentId`).
+- Both are shown on any item that has them, leaf tasks included (C11).
 
 ---
 
