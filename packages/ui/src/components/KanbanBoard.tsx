@@ -328,7 +328,7 @@ const KanbanCard: React.FC<KanbanCardProps> = ({
         </div>
       </div>
       <h3 className="font-semibold text-slate-800 dark:text-slate-100 text-[13px] leading-snug mb-1.5 group-hover:text-accent-text transition-colors">{item.title}</h3>
-      {!item.parentId && (item.branchName || item.prUrl) && (
+      {(item.branchName || item.prUrl) && (
         <div className="flex items-center gap-1.5 mb-1.5 flex-wrap">
           {item.branchName && (
             <span className="inline-flex items-center font-mono text-[9px] px-1.5 py-0.5 rounded bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 border border-slate-200 dark:border-slate-700 truncate max-w-[140px]" title={item.branchName}>

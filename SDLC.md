@@ -55,11 +55,23 @@ Branches are managed manually by the developer. AgenFK does not create branches 
 
 The developer creates the branch and links it to the item via `update_item({ id, branchName: '<branch>' })`.
 
-Branches are only tracked on **top-level items** (no `parentId`). Child tasks inherit the parent's branch.
+Any item may carry a `branchName`, leaf tasks included. Branches were once tracked only on top-level items, on the theory that child tasks inherited the parent's branch — but nothing ever implemented that inheritance, and a plan whose only top-level item is an epic cannot give its tasks a branch each. The constraint was removed (C11).
 
 ### Gatekeeper Branch Checkout
 
-If the item has a `branchName` that exists locally, the **workflow gatekeeper** will auto-checkout the branch before the agent's first edit. If the branch does not exist locally, the gatekeeper warns the agent to create and check out the branch manually.
+If the item has a `branchName`, the **workflow gatekeeper** reports its state before the agent's first edit, and switches to it when — and only when — that is safe:
+
+| State | What happens |
+|---|---|
+| Already on the branch | Nothing. |
+| Branch is free and the working tree is clean | The gatekeeper checks it out. |
+| Branch is free but the tree has uncommitted changes | **Refused.** Commit or stash first; the server will not switch branches under work in progress. |
+| Branch is checked out in another worktree | Reported, with that worktree's path. Never taken away from it. |
+| That worktree's directory is gone | Reported as prunable, with `git worktree prune`. |
+| Branch exists only on the remote | Reported, with the `git checkout -b <b> origin/<b>` to run. |
+| No such branch | Reported; work on the current branch or ask for it to be created. |
+
+The gatekeeper never checks out a branch whose name starts with a dash: `git branch` rejects such names, but they can be written directly into an item, and git would read them as options.
 
 ---
 
@@ -190,7 +202,7 @@ The item tracks PR state:
 The Kanban board displays:
 - A **branch chip** (monospace, truncated) showing the branch name.
 - A **PR badge** (color-coded by status, clickable link to the PR).
-- Both are only shown on top-level items (`!item.parentId`).
+- Both are shown on any item that has them, leaf tasks included (C11).
 
 ---
 

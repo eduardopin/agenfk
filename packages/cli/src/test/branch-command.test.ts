@@ -179,14 +179,14 @@ describe('branch create', () => {
     errSpy.mockRestore();
   });
 
-  it('refuses child items and never creates a branch or links one', async () => {
+  // C11: previously asserted the refusal. See branch-link.test.ts for the
+  // reasoning; the assertion is inverted, the test is kept.
+  it('creates and links a branch for a child item (C11: no longer top-level only)', async () => {
     mockItem({ parentId: PARENT_ID });
-    await expect(
-      program.parseAsync(['node', 'agenfk', 'branch', 'create', ITEM_ID]),
-    ).rejects.toThrow(ExitError);
-    expect(exitSpy).toHaveBeenCalledWith(1);
-    expect(mockedChildProcess.execFileSync).not.toHaveBeenCalled();
-    expect(mockedAxios.put).not.toHaveBeenCalled();
+    await program.parseAsync(['node', 'agenfk', 'branch', 'create', ITEM_ID]);
+    expect(exitSpy).not.toHaveBeenCalled();
+    expect(mockedChildProcess.execFileSync).toHaveBeenCalled();
+    expect(mockedAxios.put).toHaveBeenCalled();
   });
 
   it('does not link the branch when git checkout -b fails', async () => {

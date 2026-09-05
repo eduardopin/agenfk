@@ -62,19 +62,31 @@ describe('branch link command', () => {
     spy.mockRestore();
   });
 
-  it('should reject linking for child items (only top-level allowed)', async () => {
+  // C11: this test previously asserted the opposite — that linking a child item
+  // was refused, "Branches are tracked on top-level items only". The delivery
+  // plan needs one branch per task and the only top-level item in a plan is the
+  // epic, so the constraint was relaxed by owner decision. The assertion is
+  // inverted rather than the test deleted: it still covers this code path.
+  it('links a branch to a child item (C11: no longer top-level only)', async () => {
     const itemId = 'a1b2c3d4-0000-0000-0000-000000000003';
     const parentId = 'e5f6a7b8-0000-0000-0000-000000000004';
     mockedAxios.get.mockResolvedValue({
       data: { id: itemId, title: 'Test', type: 'TASK', parentId },
     });
+    // The branch must exist locally — that check is unchanged and still applies
+    // to a child item, so it is satisfied here rather than bypassed.
+    mockedChildProcess.execSync.mockReturnValue(Buffer.from('some-branch\n'));
+    mockedAxios.put.mockResolvedValue({ data: {} });
 
     const spy = vi.spyOn(process, 'exit').mockImplementation(() => undefined as never);
     await program.parseAsync([
       'node', 'agenfk', 'branch', 'link', itemId, 'some-branch',
     ]);
-    expect(spy).toHaveBeenCalledWith(1);
-    expect(mockedAxios.put).not.toHaveBeenCalled();
+    expect(spy).not.toHaveBeenCalled();
+    expect(mockedAxios.put).toHaveBeenCalledWith(
+      expect.stringContaining(itemId),
+      { branchName: 'some-branch' },
+    );
     spy.mockRestore();
   });
 

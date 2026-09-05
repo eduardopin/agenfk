@@ -64,6 +64,14 @@ All notable changes to AgEnFK are documented here.
   so the marker above is found as before. An **unrelated** nested clone keeps its own
   boundary and no longer inherits a marker from the directory it sits in — a
   deliberate behaviour change for that case.
+- **BREAKING (behaviour): any item may now carry a `branchName`, leaf tasks included.**
+  `agenfk branch create`, `agenfk branch link` and `agenfk pr create` refused any item with
+  a parent — *"Branches are tracked on top-level items only"*. The rule rested on child
+  tasks inheriting the parent's branch, which **nothing in the codebase ever implemented**,
+  and it made one-branch-per-task impossible for any plan whose only top-level item is an
+  epic. The three guards are gone; `agenfk pr-register` never had one, so this also makes
+  the CLI internally consistent. The Kanban card shows the branch and PR chips on child
+  items too. Contradiction C11.
 
 ### Fixed
 - Documentation stated that storage used `better-sqlite3`. It has always used
@@ -101,6 +109,19 @@ All notable changes to AgEnFK are documented here.
   repoint with the directory it resolved from, and records it as an item comment.
 - **`autoGitCommit` refuses to run outside a repository root**, the home directory
   included, and every refusal is logged with its reason.
+- **The gatekeeper's branch auto-checkout had never worked, for anyone.** It ran
+  `git rev-parse --verify -- <branch>`, and `--` tells git that everything after it is a
+  *path* — so git answered *"Needed a single revision"* for every branch that has ever
+  existed, and the catch-all reported *"Branch does not exist locally"*. The feature
+  documented in `SDLC.md` §"Gatekeeper Branch Checkout" was inert on every item with a
+  branch. The check now uses `refs/heads/<name>`, and `git checkout -- <branch>` — a file
+  checkout, not a branch switch — was wrong for the same reason.
+- **The gatekeeper is worktree-aware.** A branch checked out in another worktree is
+  reported as such, naming that worktree, instead of being attempted and then mis-reported
+  as missing — which would have had an agent create a second branch for the same work. A
+  checkout git refuses now reports git's own words rather than a guess. The decision moved
+  into `packages/server/src/branch-checkout.ts`, which is tested against real repositories
+  and real worktrees.
 
 ## [1.1.0-beta.2] — 2026-06-23
 
