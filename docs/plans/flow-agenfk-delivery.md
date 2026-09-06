@@ -31,9 +31,13 @@ it becomes the final step and `agenfk verify` without a command runs the project
 Work in this task's own git worktree on its `feature/<item-id>_t<nn>-<slug>` branch
 (plan §2.3). Never commit to `main`, never `--force`, never `--no-verify`. Run `npm ci`
 in a new worktree before anything else — `git worktree add` gives a checkout with no
-`node_modules`. Create `.agenfk/project.json` in the worktree before running
-`agenfk verify`: without it `findProjectRoot` walks up to `$HOME` and runs the
-verify command there (BUG 37660bd2).
+`node_modules`. Create `.agenfk/project.json` in the worktree
+before anything that resolves the project from the directory — `agenfk current-project`
+and its callers fail without it. `agenfk verify` no longer needs it: it sends its cwd,
+and the server resolves the root at or below the git toplevel, which in a worktree is
+the worktree itself (PR #3 closed BUG 37660bd2). Be aware that verify REPOINTS
+`project.projectRoot` to whatever root it resolved: it is one mutable slot shared by
+every worktree of this project, so the last verify wins.
 
 Explore before claiming anything exists — grep for the specific function, route or
 config key rather than assuming. MEASURE the baseline suite on the branch point and

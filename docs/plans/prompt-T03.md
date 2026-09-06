@@ -99,9 +99,15 @@ STEP 4 — rules that bind you
   threshold, a skip or a loosened assertion.
 - Record out-of-scope defects you find as new AgEnFK items; do not fix them without approval.
 - `npm run build` must pass and be reported.
-- The flow's IN_PROGRESS exit criteria still instructs you to create .agenfk/project.json because
-  "findProjectRoot walks up to $HOME (BUG 37660bd2)". That text is **stale** — PR #3 fixed it, and
-  the file is present here anyway. Do not act on it; note it in the handoff as flow text to update.
+- .agenfk/project.json IS still required in the worktree (it is already there): `agenfk
+  current-project` and every command that resolves the project from the directory fail without it.
+  What is stale is the flow's stated REASON — "findProjectRoot walks up to $HOME (BUG 37660bd2)".
+  PR #3 closed that: `agenfk verify` sends its cwd and the server resolves the root at or below the
+  git toplevel, which in a worktree is the worktree itself. Verified by probe on 2026-09-06.
+- `agenfk verify` REPOINTS project.projectRoot to the root it resolves (server.ts:2955-2985, logged
+  and annotated on the item). It is one mutable slot shared by every worktree of this project:
+  right now it still points at ../agenfk-wt/c11, the previous task's worktree, and your first
+  verify moves it here. Nothing in this task should rely on its value.
 - A schema change needs owner approval before it lands (T03 gate: "plan, schema change approval").
   Present the migration plan — table, columns, ordering, rollback — and wait.
 

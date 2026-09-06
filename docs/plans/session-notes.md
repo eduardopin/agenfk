@@ -245,10 +245,23 @@ qualquer modo.
 - **`agenfk --version` continua dizendo 1.1.16** — a versão declarada não distingue o daemon
   remendado do original. A única evidência da troca é este registro e o diretório de backup.
 
-- **O texto do passo IN_PROGRESS do flow `agenfk-delivery` está desatualizado**: ainda manda
-  criar `.agenfk/project.json` na worktree porque "`findProjectRoot` sobe até `$HOME`
-  (BUG `37660bd2`)". O PR #3 fechou isso. O flow vive no servidor, não no repositório, então
-  corrigi-lo é mudança de estado do board — fica para o owner decidir junto com o T03.
+- **O texto do passo IN_PROGRESS do flow `agenfk-delivery` está errado na justificativa.**
+  Medido, não deduzido: numa worktree **sem** `.agenfk/`, `resolveProjectRoot` para no toplevel
+  e o ramo `git-toplevel` devolve a própria worktree — a mesma resposta que o marcador daria.
+  Mas `agenfk current-project` **falha** sem o marcador ("No AgEnFK project found"). Ou seja: a
+  instrução continua válida, o motivo que ela dá morreu com o PR #3. Corrigido em
+  `docs/plans/flow-agenfk-delivery.md`; **o flow no servidor (`fcf2f3b1`) segue com o texto
+  antigo** — o classificador do harness bloqueou tanto o `PUT /flows/:id` quanto o MCP
+  `update_flow`, então a escrita no board depende do owner. O flow é usado por um único projeto
+  (`agenfkplus`); a afirmação anterior de que afetaria todos os projetos estava errada.
+
+- **`project.projectRoot` é um slot único e mutável, compartilhado por todas as worktrees.**
+  `POST /items/:id/validate` chama `resolveProjectRoot(cwd)` e repontа o projeto antes de rodar
+  o `verifyCommand` (`server.ts:2955-2985`). Hoje ele aponta para `../agenfk-wt/c11`, worktree da
+  tarefa anterior, cuja branch já foi mesclada. Com tarefas em série o último `verify` corrige
+  sozinho; com duas worktrees ativas em paralelo — que é o destino do plano — o último `verify`
+  ganha e o outro roda no lugar errado. Vizinho do T07/T25 (auto-commit com escopo de worktree),
+  mas não é a mesma coisa: aqui o problema é a identidade do projeto, não o commit.
 
 - **O gatekeeper é ambíguo neste projeto**: a story `7d83c768` (Phase A) está IN_PROGRESS junto
   com o T03, então toda chamada precisa de `--item-id`.
