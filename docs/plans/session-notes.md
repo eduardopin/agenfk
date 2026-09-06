@@ -190,3 +190,73 @@ qualquer modo.
 - **As guardas limitam *onde* o auto-commit acontece, não *o que* ele estagia.** Com
   o opt-in ligado, `git add -A` continua varrendo a árvore inteira na raiz do projeto.
   O auto-commit com escopo de worktree e ciente da execução continua sendo T07/T25.
+
+---
+
+# Session Notes — 2026-09-06 — Abertura do T03 (preparação, sem implementação)
+
+## Concluído
+
+- **Worktree `../agenfk-wt/t03` levada de `3cc00bf3` para `main` `74196dad`** por fast-forward.
+  Estava dois commits atrás e portanto sem os fixes dos PRs #3 e #4 — os mesmos fixes que o
+  card do T03 pressupõe.
+
+- **Daemon atualizado por troca cirúrgica dos `dist`, não por `npm run install:framework`.**
+  Rodar o instalador a partir do clone teria consequências que a decisão original não previa:
+  `rootDir` é o próprio diretório de onde se roda, então o framework home viraria
+  `/home/pin/projects/agenfk` — o CLI (`~/.local/bin/agenfk`) seria repontado para o checkout
+  git, o daemon passaria a executar o `dist` de qualquer branch que estivesse na árvore, e com
+  o `rulesScope: "project"` já gravado no config o bundle de regras sobrescreveria `AGENTS.md`,
+  `.claude/CLAUDE.md` e `.cursor/rules/` **dentro do repositório**, sujando a `main`.
+  O que de fato diferia entre o instalado e a `main` era só o código compilado:
+
+  | | `~/.agenfk-system` (1.1.16) | repo `main` |
+  |---|---|---|
+  | versão declarada | 1.1.16 | 1.1.16 (os fixes são commits não liberados) |
+  | dependências (root + 5 pacotes) | idênticas | idênticas |
+  | `bin/` (hooks PreToolUse) | byte-idêntico | byte-idêntico |
+  | `packages/*/dist` | anterior aos PRs #3/#4 | com os fixes |
+
+  Então: `npm run build`, backup dos `dist` antigos em
+  `~/.agenfk-system/.dist-backup-20260906-161729`, cópia dos cinco `dist`
+  (`core`, `storage-sqlite`, `telemetry`, `cli`, `server`) e `agenfk restart --quiet`.
+  `dbPath` preservado (`~/.agenfk-system/.agenfk/db.sqlite`), 47 itens intactos, board no ar.
+
+- **Item T03 (`7f8f6821`) movido para IN_PROGRESS** e gatekeeper confirmado autorizando
+  a partir da worktree.
+
+- **`docs/plans/prompt-T03.md` escrito** — o prompt de kickoff que a memória do projeto dizia
+  existir mas que nunca chegou ao disco.
+
+## Decisões Tomadas
+
+| # | Decisão | Consequência |
+|---|---|---|
+| 1 | Aplicar os fixes por troca de `dist` em vez de reinstalar | Mesmo efeito no comportamento do daemon, sem repontar CLI nem sobrescrever arquivos versionados. Reversível pelo backup |
+| 2 | Preparar o T03 aqui e executá-lo em sessão nova | Cumpre o passo 0 do card (Opus 5 / xhigh / `/clear`) e deixa o envelope de 600k começar do zero |
+| 3 | Medir o envelope por `/cost` no fim da sessão | `agenfk tokens --item` retorna `[]` e sempre retornou (BUG `71593e56`). Número por sessão, não por item |
+
+## Riscos Ativos
+
+- **`agenfk upgrade` desfaz o patch.** O CLI anuncia que 1.1.17 está disponível; a release
+  publicada não contém os commits dos PRs #3/#4. Rodar o upgrade substitui o `dist` remendado
+  pelo publicado e traz de volta os três defeitos. Vale até a próxima release da fork.
+
+- **`agenfk --version` continua dizendo 1.1.16** — a versão declarada não distingue o daemon
+  remendado do original. A única evidência da troca é este registro e o diretório de backup.
+
+- **O texto do passo IN_PROGRESS do flow `agenfk-delivery` está desatualizado**: ainda manda
+  criar `.agenfk/project.json` na worktree porque "`findProjectRoot` sobe até `$HOME`
+  (BUG `37660bd2`)". O PR #3 fechou isso. O flow vive no servidor, não no repositório, então
+  corrigi-lo é mudança de estado do board — fica para o owner decidir junto com o T03.
+
+- **O gatekeeper é ambíguo neste projeto**: a story `7d83c768` (Phase A) está IN_PROGRESS junto
+  com o T03, então toda chamada precisa de `--item-id`.
+
+## Observado, não corrigido
+
+- Matei o PID 81132 achando que era o daemon da API; era um servidor MCP stdio
+  (`packages/server/dist/index.js`) de outra sessão cliente, no ar havia 1d9h. O daemon da API
+  é `server.js`. Sem dano: o cliente respawna o MCP na próxima conexão. Fica registrado porque
+  a distinção `index.js` (MCP stdio) vs `server.js` (API) não está em nenhum documento e é fácil
+  de errar de novo.
