@@ -2,6 +2,11 @@
 
 Operator pre-flight, before pasting the block below:
 
+- **Apply the two pending owner writes first** (see `docs/plans/session-notes.md`, "Pendências
+  deixadas para o owner"): the flow record `fcf2f3b1` on the server must be at `version 1.1.0`,
+  otherwise the gatekeeper hands the agent a justification that PR #3 already killed. Check with
+  `curl -s http://localhost:3000/flows/fcf2f3b1-c5a6-4f23-a359-7d0a24105fa0 | grep -o '"version":"[^"]*"' | head -1`.
+  The corrected text is in `docs/plans/flow-agenfk-delivery.md` if the payload has to be rebuilt.
 - Open a **new Herdr pane** in the `agenfk` workspace, `cd /home/pin/projects/agenfk-wt/t03`
   (the task's worktree — **not** the main clone).
 - Start Claude Code there and accept the **trust dialog** if prompted.
@@ -12,7 +17,22 @@ Operator pre-flight, before pasting the block below:
 You are executing task T03 — AD0-b, of AGENFK_AUTONOMOUS_DELIVERY_IMPLEMENTATION_PLAN.md
 (repository root), which implements AGENFK_AUTONOMOUS_DELIVERY_MASTER_SPEC.md.
 
-Work on T03 only. Do not start T04. Token envelope: 600k; split trigger 450k (plan §3).
+Work on T03 only. Do not start T04.
+
+TOKEN BUDGET — a hard ceiling, set by the owner on 2026-09-08
+500k tokens for this task, across however many sessions it takes. Split trigger: 375k.
+This overrides the 600k/450k figures in plan §3 — if the plan and this prompt disagree, this
+prompt wins, and say so in the handoff.
+Check /cost at every natural boundary (after STEP 1, after each lettered item in STEP 3, before
+close-out) and report the running number in your progress messages. Do not wait until the end to
+discover you overspent.
+How to stay inside it:
+- Delegate every wide search, inventory and audit to a subagent. Reading fifteen files in the
+  main thread leaves ~80k in context for the rest of the session; a subagent returns 1k.
+- Never `cat` a file when a range will do: `sed -n`, `grep -n`, Read with offset/limit.
+- Never dump a full build or test log into context: pipe through `tail -50` / `grep`.
+- If a step balloons, stop and split rather than pushing through — the split rule below is the
+  intended outcome, not a failure.
 Run this task on Opus 5 at effort xhigh (plan §3.5). Subagents: Sonnet 5 for review and
 exploration; Haiku 4.5 only for mechanical greps.
 
@@ -35,9 +55,13 @@ STEP 1 — read, in this order, nothing else
 Use a subagent for anything wider. Do not read packages/server/src/server.ts whole (4,080 lines);
 grep it.
 
-STEP 2 — verified starting state (measured 2026-09-06; confirm, do not redo)
-- Worktree /home/pin/projects/agenfk-wt/t03, fast-forwarded to main 74196dad, tree clean,
+STEP 2 — verified starting state (measured 2026-09-06/08; confirm, do not redo)
+- Worktree /home/pin/projects/agenfk-wt/t03, branched from main 74196dad, tree clean,
   `npm ci` already done, `.agenfk/project.json` present (project ef5f9e00-b80d-4f9a-9a82-846479156f2d).
+- The branch already carries **three preparation commits** (2ca5ad7a, d20036f8, 328e14de — this
+  prompt, the flow-text correction and the session notes) and is published on the **`fork`**
+  remote. `origin` is `cglab-public/agenfk` and returns 403 for this account: **push to `fork`,
+  never to `origin`**, and open the PR from the fork.
 - PRs #1-#4 are merged into main. T01 and T02 are DONE.
 - The AgEnFK item for this task is 7f8f6821-33d4-492d-8574-dd6b83faff98 and is **already
   IN_PROGRESS**. Its parent story 7d83c768 is also IN_PROGRESS, so the gatekeeper is ambiguous:
@@ -48,9 +72,9 @@ STEP 2 — verified starting state (measured 2026-09-06; confirm, do not redo)
   telemetry,cli,server}/dist and restarting. It therefore HAS the PR #3/#4 fixes
   (project-root boundary, working gatekeeper branch check, auto-commit opt-in and off by default).
   Old dists are backed up at ~/.agenfk-system/.dist-backup-20260906-161729.
-  **`agenfk --version` still prints 1.1.16 and the CLI nags that 1.1.17 is available.
-  DO NOT run `agenfk upgrade`** — the published 1.1.17 release does not contain these commits
-  and would silently undo the patch.
+  **`agenfk --version` still prints 1.1.16 and the CLI nags that a newer release is available.
+  DO NOT run `agenfk upgrade`** — the published release does not contain these commits and would
+  silently undo the patch.
 - Last recorded baseline on main: 226 test files, 2,522 passed, 1 skipped. The flow requires you
   to MEASURE it yourself on this branch point and report the actual numbers. Do not trust that line.
 
@@ -105,18 +129,21 @@ STEP 4 — rules that bind you
   PR #3 closed that: `agenfk verify` sends its cwd and the server resolves the root at or below the
   git toplevel, which in a worktree is the worktree itself. Verified by probe on 2026-09-06.
 - `agenfk verify` REPOINTS project.projectRoot to the root it resolves (server.ts:2955-2985, logged
-  and annotated on the item). It is one mutable slot shared by every worktree of this project:
-  right now it still points at ../agenfk-wt/c11, the previous task's worktree, and your first
-  verify moves it here. Nothing in this task should rely on its value.
+  and annotated on the item). It is one mutable slot shared by every worktree of this project, and
+  your first verify moves it here. Nothing in this task should rely on its value. (Known defect,
+  already recorded — do not fix it in T03.)
 - A schema change needs owner approval before it lands (T03 gate: "plan, schema change approval").
   Present the migration plan — table, columns, ordering, rollback — and wait.
 
 STEP 5 — measurement and the split rule
 `agenfk tokens --item` returns [] and always has: the token-ingestion worker's call site was
 deleted in commit 886d50cb and token_events has never had a row (BUG 71593e56, open, belongs to
-T29). So measure this task with **/cost at the end of the session** and record the number in
-docs/plans/handoff-T03.md. If you pass 450k before the compat suite is green, stop and split:
-ship the migration framework + foundation gate as T03 and the compat suite as a new item T03-b.
+T29). So /cost is the only real measurement: check it at the boundaries listed under TOKEN BUDGET
+and record the final number in docs/plans/handoff-T03.md.
+**If you pass 375k before the compat suite is green, stop and split**: ship the migration
+framework + foundation gate as T03, open a new item T03-b for the compat suite, and hand over.
+Splitting on the trigger is the expected outcome, not a failure — do not spend the remaining 125k
+trying to avoid it.
 
 STEP 6 — close-out
 Flow agenfk-delivery: TODO → IN_PROGRESS → REVIEW → TEST → MUTATE → DONE. MUTATE is the final
@@ -126,6 +153,7 @@ step's exit criteria with the gatekeeper before trying to satisfy it. REVIEW req
 INDEPENDENT reviewer — spawn a read-only reviewer subagent, or say plainly that you could not
 and ask for a review in a fresh session. Never claim a review you did not have.
 Then: update CHANGELOG.md, write docs/plans/handoff-T03.md (what T04 must know), append to
-docs/plans/session-notes.md, and open the PR from the fork with `gh` — body listing spec sections
-implemented, migrations added, tests added, compatibility risks, contradictions found, token usage.
+docs/plans/session-notes.md, and open the PR **from the fork** with `gh` — body listing spec
+sections implemented, migrations added, tests added, compatibility risks, contradictions found,
+and the /cost figure against the 500k ceiling.
 ```
