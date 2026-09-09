@@ -273,3 +273,24 @@ qualquer modo.
   é `server.js`. Sem dano: o cliente respawna o MCP na próxima conexão. Fica registrado porque
   a distinção `index.js` (MCP stdio) vs `server.js` (API) não está em nenhum documento e é fácil
   de errar de novo.
+
+## Pendências deixadas para o owner (2026-09-08)
+
+Duas escritas de estado foram bloqueadas para o agente pelo classificador do harness e ficaram
+para execução manual. Nenhuma delas bloqueia a implementação do T03.
+
+1. **Flow `agenfk-delivery` (`fcf2f3b1`) ainda em `version 1.0.0`.** A correção do exit criteria
+   do IN_PROGRESS foi aplicada na cópia versionada (`docs/plans/flow-agenfk-delivery.md`, commit
+   `d20036f8`) mas não no registro do servidor, que é o texto que o gatekeeper mostra em runtime.
+   Enquanto não for aplicada, o agente em execução lê a justificativa morta (`findProjectRoot`
+   sobe até `$HOME`) em vez da correta. Payload: mesmo texto do arquivo versionado, `version`
+   `1.0.0` → `1.1.0`, seis steps preservados; aplicar via `PUT /flows/fcf2f3b1-...` ou
+   `agenfk flow edit fcf2f3b1-...`.
+
+2. **BUG do `project.projectRoot` ainda não está no board.** O achado está descrito acima em
+   "Riscos Ativos"; a exit criteria do IN_PROGRESS manda registrá-lo como item AgEnFK. Abrir em
+   `agenfkplus` (`ef5f9e00-...`) como BUG, sem corrigir.
+
+A branch `feature/7f8f6821-..._t03-migrations-foundation-gate` foi publicada em `fork` (não em
+`origin`, que é `cglab-public/agenfk` e não aceita push desta conta). PR fica para o close-out
+do T03.
